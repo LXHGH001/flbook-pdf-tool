@@ -9,7 +9,6 @@ import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.keys import Keys
 
 st.set_page_config(
     page_title="FLBook & 云展网转 PDF 工具", page_icon="📚", layout="centered"
@@ -51,17 +50,21 @@ if st.button("启动系统浏览器内核渲染并生成 PDF", type="primary", u
         driver.get(url)
         time.sleep(5)  # 等待 JS 动态加载
 
-        st.write(f"3. 正在自动模拟翻页（共 {total_pages} 页）以触发图片加载...")
+        st.write(f"3. 正在通过纯 JS 触发模拟翻页（共 {total_pages} 页）...")
         progress_bar = st.progress(0)
 
         for i in range(int(total_pages)):
-          # 每次循环重新定位 body 元素，彻底避免 stale element 错误
-          try:
-              body = driver.find_element("tag name", "body")
-              body.send_keys(Keys.ARROW_RIGHT)
-          except:
-              # 备用：通过 JS 触发键盘右键事件
-              driver.execute_script("window.dispatchEvent(new KeyboardEvent('keydown', {'key': 'ArrowRight'}));")
+          # 核心：使用纯 JavaScript 触发键盘右键事件，绝对不会报 stale element 错误！
+          driver.execute_script("""
+              var event = new KeyboardEvent('keydown', {
+                  key: 'ArrowRight',
+                  code: 'ArrowRight',
+                  keyCode: 39,
+                  which: 39,
+                  bubbles: true
+              });
+              document.dispatchEvent(event);
+          """)
 
           time.sleep(0.7)  # 留出图片渲染时间
           
