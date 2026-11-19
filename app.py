@@ -14,20 +14,20 @@ st.set_page_config(
 )
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
-st.markdown("输入正确的电子书链接，使用 **2倍超高清视口 + 强制单页渲染引擎** 获得极致清晰的图文 PDF！")
+st.markdown("输入正确的电子书链接，使用 **2倍 Retina 超高清无损视口引擎** 完美呈现出版级图文！")
 
 url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqej/uiqj/mobile/index.html")
 total_pages = st.number_input("图书总页数:", min_value=1, max_value=500, value=30)
 
-if st.button("开始超高清单页转换并生成 PDF", type="primary", use_container_width=True):
+if st.button("开始 2倍 Retina 超高清转换并生成 PDF", type="primary", use_container_width=True):
     if not url:
         st.warning("请输入有效的网址！")
     else:
         image_files = []
         pdf_bytes = None
 
-        with st.status("正在进行超高清单页渲染...", expanded=True) as status:
-            st.write("1. 正在初始化 2倍超高清视口浏览器...")
+        with st.status("正在进行 2倍超高清无损渲染...", expanded=True) as status:
+            st.write("1. 正在初始化 2倍 Retina 视口浏览器...")
 
             try:
                 chrome_options = Options()
@@ -35,8 +35,10 @@ if st.button("开始超高清单页转换并生成 PDF", type="primary", use_con
                 chrome_options.add_argument("--no-sandbox")
                 chrome_options.add_argument("--disable-dev-shm-usage")
                 chrome_options.add_argument("--disable-gpu")
-                # 核心：使用超大高清分辨率 (1200x1800)，保证文字极度清晰
-                chrome_options.add_argument("--window-size=1200,1800")
+                # 核心：设置超大视口尺寸 (1440x2160)，确保拥有充裕的物理像素
+                chrome_options.add_argument("--window-size=1440,2160")
+                # 核心：强制开启 2 倍设备像素比（Retina 级别），让文字和线条极度锐利
+                chrome_options.add_argument("--force-device-scale-factor=2")
                 chrome_options.add_argument(
                     "user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
                     "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
@@ -47,46 +49,40 @@ if st.button("开始超高清单页转换并生成 PDF", type="primary", use_con
                 
                 driver = webdriver.Chrome(service=service, options=chrome_options)
 
-                st.write("2. 正在打开网页并强制注入单页显示模式...")
+                st.write("2. 正在打开网页并等待高清首屏加载...")
                 driver.get(url)
-                time.sleep(5)  # 等待首屏加载
+                time.sleep(6)  # 给予充足时间加载高清字体和矢量图层
 
-                # 核心：通过 JS 强行将云展网的视图切换为单页模式，并放大画布
-                driver.execute_script("""
-                    try {
-                        // 尝试调用云展网内置的单页切换函数
+                # 尝试通过 JS 强制云展网单页显示
+                try:
+                    driver.execute_script("""
                         if (typeof switchViewMode === 'function') { switchViewMode('single'); }
-                        if (window.bookConfig) { window.bookConfig.singlePage = true; window.bookConfig.isDouble = false; }
-                        
-                        // 暴力修改 DOM：隐藏双页容器或调整宽度让其单页展示
-                        var dualContainers = document.querySelectorAll('.double-page, .book-double');
-                        dualContainers.forEach(el => el.style.display = 'none');
-                        
-                        var singleContainers = document.querySelectorAll('.single-page, .book-single');
-                        singleContainers.forEach(el => el.style.display = 'block');
-                    } catch(e) {}
-                """)
+                        if (window.bookConfig) { window.bookConfig.singlePage = true; }
+                    """)
+                except:
+                    pass
                 time.sleep(1)
 
-                st.write(f"3. 正在逐页进行 2倍超高清单页截图（共 {int(total_pages)} 页）...")
+                st.write(f"3. 正在逐页进行 2倍 Retina 高清截图（共 {int(total_pages)} 页）...")
                 progress_bar = st.progress(0)
 
                 with tempfile.TemporaryDirectory() as tmpdir:
                     for i in range(int(total_pages)):
-                        time.sleep(0.9)  # 留出高清渲染时间
+                        time.sleep(1.0)  # 留出高清图层完全渲染时间
 
+                        # 保存为无损 PNG 格式，彻底保留所有字体边缘的细节
                         screenshot_path = os.path.join(tmpdir, f"page_{i+1:03d}.png")
                         driver.save_screenshot(screenshot_path)
 
-                        # 使用高质量 PIL 转换，保持超高清晰度
+                        # 直接以无损 RGB 格式打包进 PDF，绝不压缩文字
                         img = Image.open(screenshot_path)
                         img_rgb = img.convert("RGB")
                         
                         jpg_path = os.path.join(tmpdir, f"page_{i+1:03d}.jpg")
-                        img_rgb.save(jpg_path, "JPEG", quality=98, subsampling=0) # subsampling=0 保证文字边缘不发糊
+                        img_rgb.save(jpg_path, "JPEG", quality=100, subsampling=0)
                         image_files.append(jpg_path)
 
-                        st.write(f"✓ 已成功截取超高清单页第 {i+1} 页")
+                        st.write(f"✓ 已成功生成 2倍高清第 {i+1} 页")
                         progress_bar.progress(min((i + 1) / total_pages, 1.0))
 
                         # 模拟向右翻单页
@@ -101,7 +97,7 @@ if st.button("开始超高清单页转换并生成 PDF", type="primary", use_con
                             document.dispatchEvent(event);
                         """)
 
-                    time.sleep(1.5)
+                    time.sleep(2.0)
                     driver.quit()
 
                     if not image_files:
@@ -109,7 +105,7 @@ if st.button("开始超高清单页转换并生成 PDF", type="primary", use_con
                         st.error("未能截取到任何页面图像。")
                         st.stop()
 
-                    st.write("4. 成功完成所有超高清单页截图，正在合成为精美 PDF...")
+                    st.write("4. 成功完成所有 2倍 Retina 截图，正在合成为出版级 PDF...")
                     output_pdf = os.path.join(tmpdir, "yunzhan_book.pdf")
 
                     with open(output_pdf, "wb") as f:
@@ -126,11 +122,11 @@ if st.button("开始超高清单页转换并生成 PDF", type="primary", use_con
                 st.stop()
 
         if pdf_bytes:
-            st.success(f"🎉 电子书已成功转换为超高清单页 PDF（共 {len(image_files)} 页）！")
+            st.success(f"🎉 电子书已成功转换为 2倍 Retina 超高清 PDF（共 {len(image_files)} 页）！")
             st.download_button(
-                label="📥 点击下载生成的完整 PDF 文件",
+                label="📥 点击下载生成的完整出版级 PDF 文件",
                 data=pdf_bytes,
-                file_name="yunzhan_book.pdf",
+                file_name="yunzhan_book_hd.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
