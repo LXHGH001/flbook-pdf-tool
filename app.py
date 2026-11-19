@@ -1,123 +1,154 @@
 import os
-import time
+import re
+import json
 import tempfile
 from PIL import Image
 import img2pdf
 import requests
 import streamlit as st
 
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.keys import Keys
-
 st.set_page_config(
     page_title="FLBook & 云展网转 PDF 工具", page_icon="📚", layout="centered"
 )
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
-st.markdown("输入正确的电子书链接，使用**无头浏览器内核**动态渲染并生成高质量 PDF！")
+st.markdown("输入正确的电子书链接，**底层配置智能解析引擎**秒级生成高质量 PDF！")
 
+# 默认填入你刚发的正确链接
 url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqej/uiqj/mobile/index.html")
-total_pages = st.number_input("预估图书总页数 (测试时可填 3):", min_value=1, max_value=500, value=3)
+fallback_pages = st.number_input("预估图书总页数 (防兜底用):", min_value=1, max_value=500, value=30)
 
-if st.button("启动浏览器内核渲染并生成 PDF", type="primary", use_container_width=True):
+if st.button("开始高速转换并生成 PDF", type="primary", use_container_width=True):
   if not url:
     st.warning("请输入有效的网址！")
   else:
-    with st.status("正在通过无头浏览器内核渲染...", expanded=True) as status:
-      st.write("1. 正在初始化云端系统 Chromium 浏览器...")
-      image_urls_captured = []
+    with st.status("正在进行智能解析与下载...", expanded=True) as status:
+      st.write("1. 正在深度连接目标网页并搜寻底层图书配置...")
+      
+      headers = {
+          "User-Agent": (
+              "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+              "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+          ),
+          "Referer": url,
+      }
 
       try:
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--window-size=430,932")
-        chrome_options.add_argument(
-            "user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
-            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
-        )
-
-        # 直接调用 Streamlit 云端自带的 chromium
-        chrome_options.binary_location = "/usr/bin/chromium"
-        service = Service("/usr/bin/chromedriver")
-        
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-
-        st.write("2. 正在打开网页并等待动态加载...")
-        driver.get(url)
-        time.sleep(5)  # 等待 JS 加载
-
-        st.write(f"3. 正在自动模拟翻页（共 {total_pages} 页）以触发高清图加载...")
-        progress_bar = st.progress(0)
-        body = driver.find_element("tag name", "body")
-
-        for i in range(int(total_pages)):
-          body.send_keys(Keys.ARROW_RIGHT)
-          time.sleep(0.8)
-          
-          # 实时抓取页面中加载出的图片
-          imgs = driver.find_elements("tag name", "img")
-          for img in imgs:
-              src = img.get_attribute("src")
-              if src and src not in image_urls_captured:
-                  if any(k in src.lower() for k in ["mobile", "files", "page", "ext", "yhqej"]):
-                      image_urls_captured.append(src)
-
-          progress_bar.progress(min((i + 1) / total_pages, 1.0))
-
-        time.sleep(3)
-        
-        # 兜底再全盘扫描一次图片标签
-        for img in driver.find_elements("tag name", "img"):
-            src = img.get_attribute("src")
-            if src and src not in image_urls_captured:
-                image_urls_captured.append(src)
-
-        driver.quit()
-
+        resp = requests.get(url, headers=headers, timeout=15)
+        html = resp.text
       except Exception as e:
-        status.update(label="浏览器渲染失败", state="error")
-        st.error(f"详细错误: {e}")
+        status.update(label="访问网页失败", state="error")
+        st.error(f"错误详情: {e}")
         st.stop()
 
-      st.write(f"4. 浏览器成功捕获到 {len(image_urls_captured)} 个图片资源，开始下载...")
+      st.write("2. 正在提取图书动态配置与高清图片直链...")
 
-      if not image_urls_captured:
-        status.update(label="未捕获到图片", state="error")
-        st.error("未能从浏览器中捕获到有效书页。")
-        st.stop()
+      # 寻找页面的配置文件（通常形如 config.js 或包含 json 数据）
+      config_text = html
+      script_urls = re.findall(r'<script[^>]*src=["\']([^"\']+)["\']', html)
+      
+      for src in script_urls:
+          if any(k in src.lower() for k in ["config", "book", "data", "json", "main"]):
+              if not src.startswith("http"):
+                  from urllib.parse import urljoin
+                  src = urljoin(url, src)
+              try:
+                  sr = requests.get(src, headers=headers, timeout=5)
+                  if sr.status_code == 200:
+                      config_text += "\n" + sr.text
+              except:
+                  pass
+
+      # 提取总页数
+      total_pages = fallback_pages
+      pm = re.search(r'(?:pageCount|totalPages|totalPage|sumPages)\s*[:=]\s*(\d+)', config_text, re.IGNORECASE)
+      if pm:
+          detected_p = int(pm.group(1))
+          if detected_p > 2:
+              total_pages = detected_p
+              st.write(f"-> 自动识别到图书总页数：{total_pages} 页")
+
+      # 提取书本唯一路径标识 (例如 yhqej/uiqj)
+      book_id_path = ""
+      match_id = re.search(r'yunzhan365\.com/([^/]+/[^/]+)', url)
+      if match_id:
+          book_id_path = match_id.group(1)
+          st.write(f"-> 成功锁定书本 ID 路径：{book_id_path}")
+
+      # 构造官方高清图床 CDN 候选前缀
+      candidate_bases = []
+      if book_id_path:
+          candidate_bases.extend([
+              f"https://book.yunzhan365.com/{book_id_path}/files/mobile/",
+              f"https://online.yunzhan365.com/{book_id_path}/files/mobile/",
+              f"https://static.yunzhan365.com/{book_id_path}/files/mobile/",
+              f"https://book.yunzhan365.com/{book_id_path}/mobile/files/mobile/",
+          ])
+      
+      candidate_bases.extend([
+          "https://online.yunzhan365.com/files/mobile/",
+          "https://book.yunzhan365.com/files/mobile/",
+      ])
+
+      st.write(f"3. 正在按总页数 {total_pages} 页进行高速并行下载...")
 
       with tempfile.TemporaryDirectory() as tmpdir:
         image_files = []
+        progress_bar = st.progress(0)
         valid_count = 0
+        consecutive_failures = 0
 
-        for i, img_url in enumerate(image_urls_captured):
-          try:
-            r = requests.get(img_url, timeout=5)
-            if r.status_code == 200 and len(r.content) > 3000:
-              tmp_path = os.path.join(tmpdir, f"raw_{i}.jpg")
-              with open(tmp_path, "wb") as f:
-                f.write(r.content)
+        for p in range(1, int(total_pages) + 1):
+          img_data = None
+          
+          for base_url in candidate_bases:
+              variations = [
+                  f"{base_url}{p}.jpg",
+                  f"{base_url}{p}.png",
+                  f"{base_url}page_{p}.jpg",
+                  f"{base_url}{p:02d}.jpg",
+                  f"{base_url}{p:03d}.jpg",
+              ]
+              
+              for cu in variations:
+                  try:
+                      r = requests.get(cu, headers=headers, timeout=3)
+                      if r.status_code == 200 and len(r.content) > 1500:
+                          img_data = r.content
+                          break
+                  except:
+                      pass
+              if img_data:
+                  break
 
-              img_rgb = Image.open(tmp_path).convert("RGB")
-              file_path = os.path.join(tmpdir, f"page_{valid_count+1:03d}.jpg")
-              img_rgb.save(file_path, "JPEG", quality=95)
+          if img_data:
+              consecutive_failures = 0
+              try:
+                  tmp_path = os.path.join(tmpdir, f"raw_{p}.jpg")
+                  with open(tmp_path, "wb") as f:
+                      f.write(img_data)
 
-              image_files.append(file_path)
-              valid_count += 1
-          except:
-            pass
+                  img_rgb = Image.open(tmp_path).convert("RGB")
+                  file_path = os.path.join(tmpdir, f"page_{valid_count+1:03d}.jpg")
+                  img_rgb.save(file_path, "JPEG", quality=95)
+
+                  image_files.append(file_path)
+                  valid_count += 1
+              except:
+                  pass
+          else:
+              consecutive_failures += 1
+              if consecutive_failures >= 10 and valid_count > 2:
+                  break
+
+          progress_bar.progress(p / total_pages)
 
         if not image_files:
           status.update(label="下载失败", state="error")
-          st.error("下载图片时被服务器拒绝。")
+          st.error("未能下载到任何页面图片。请核对链接是否正确。")
           st.stop()
 
-        st.write(f"5. 成功整理 {len(image_files)} 页，正在合成为 PDF...")
+        st.write(f"4. 成功获取 {len(image_files)} 页高清页面, 正在合成为 PDF...")
         output_pdf = os.path.join(tmpdir, "yunzhan_book.pdf")
 
         with open(output_pdf, "wb") as f:
