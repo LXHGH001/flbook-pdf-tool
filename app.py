@@ -12,17 +12,18 @@ st.set_page_config(
 )
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
-st.markdown("输入正确的电子书链接，**Config 配置文件深度逆向引擎**完美生成 PDF！")
+st.markdown("输入正确的电子书链接，**多级 CDN 路径穿透引擎**生成高质量 PDF！")
 
+# 已经在这里把默认网址更新为了带有 yhqej/uiqj 的正确链接
 url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqej/uiqj/mobile/index.html")
-fallback_pages = st.number_input("预估图书总页数:", min_value=1, max_value=500, value=30)
+total_pages = st.number_input("预估图书总页数:", min_value=1, max_value=500, value=3)
 
-if st.button("开始配置文件逆向转换并生成 PDF", type="primary", use_container_width=True):
+if st.button("开始穿透转换并生成 PDF", type="primary", use_container_width=True):
   if not url:
     st.warning("请输入有效的网址！")
   else:
-    with st.status("正在进行配置文件逆向...", expanded=True) as status:
-      st.write("1. 正在访问主页面并搜寻所有引用的 JS 配置文件...")
+    with st.status("正在进行穿透解析...", expanded=True) as status:
+      st.write("1. 正在访问网页并检查响应状态...")
       
       headers = {
           "User-Agent": (
@@ -34,76 +35,45 @@ if st.button("开始配置文件逆向转换并生成 PDF", type="primary", use_
 
       try:
         resp = requests.get(url, headers=headers, timeout=15)
+        st.write(f"-> 网页主页面响应状态码: {resp.status_code}")
         html = resp.text
       except Exception as e:
         status.update(label="访问网页失败", state="error")
         st.error(f"错误详情: {e}")
         st.stop()
 
-      # 抓取页面中所有的 script 链接并下载其内容（特别是 config.js / bookConfig 等）
-      config_blob = html
-      script_srcs = re.findall(r'<script[^>]*src=["\']([^"\']+)["\']', html)
-      
-      for src in script_srcs:
-          if not src.startswith("http"):
-              src = urljoin(url, src)
-          try:
-              sr = requests.get(src, headers=headers, timeout=5)
-              if sr.status_code == 200:
-                  config_blob += "\n" + sr.text
-          except:
-              pass
+      st.write("2. 正在提取书本 ID 并构建多级 CDN 候选路径...")
 
-      st.write("2. 正在从配置文件中逆向真实的图片服务器与路径前缀...")
-
-      # 尝试在配置中寻找图片存储路径前缀（如 files/mobile/ 或自定义目录）
-      real_image_base = ""
-      
-      # 寻找类似 "path":"..." 或 "bookpath":"..." 或包含 files 的 URL 片段
-      path_matches = re.findall(r'["\'](https?://[^"\']+?/(?:files|mobile|ext|book/[^"\']+?)[^"\']*?)(?=/ \d+\.jpg|\d+\.png|\b)', config_blob)
-      for pm in path_matches:
-          if "yunzhan365" in pm or "flbook" in pm or "files" in pm:
-              real_image_base = pm if pm.endswith('/') else pm + '/'
-              break
-
-      # 如果没直接搜到，通过正则提取任何形如 http.../files/mobile/ 的前缀
-      if not real_image_base:
-          m_base = re.search(r'(https?://[^\s<>"]+?/(?:yhqej/uiqj|[^/]+/[^/]+)/files/mobile/)', config_blob)
-          if m_base:
-              real_image_base = m_base.group(1)
-
-      # 兜底构造标准路径
+      # 提取书本路径标识
       match_id = re.search(r'yunzhan365\.com/([^/]+/[^/]+)', url)
-      book_path = match_id.group(1) if match_id else "yhqej/uiqj"
-      
-      candidate_bases = []
-      if real_image_base:
-          candidate_bases.append(real_image_base)
-      
-      candidate_bases.extend([
+      if match_id:
+          book_path = match_id.group(1)
+          st.write(f"-> 成功锁定书本唯一路径: {book_path}")
+      else:
+          book_path = "yhqej/uiqj"
+          st.write(f"-> 使用默认路径: {book_path}")
+
+      # 构建云展网所有可能的 CDN 前缀变体
+      candidate_bases = [
           f"https://book.yunzhan365.com/{book_path}/files/mobile/",
           f"https://online.yunzhan365.com/{book_path}/files/mobile/",
           f"https://static.yunzhan365.com/{book_path}/files/mobile/",
           f"https://book.yunzhan365.com/{book_path}/mobile/files/mobile/",
-      ])
+          # 备用大图或配置目录
+          f"https://book.yunzhan365.com/{book_path}/files/large/",
+          f"https://online.yunzhan365.com/{book_path}/files/large/",
+      ]
 
-      # 自动提取总页数
-      total_pages = fallback_pages
-      pm = re.search(r'(?:pageCount|totalPages|totalPage|sumPages)\s*[:=]\s*(\d+)', config_blob, re.IGNORECASE)
-      if pm:
-          total_pages = int(pm.group(1))
-          st.write(f"-> 成功逆向识别到图书总页数：{total_pages} 页")
-
-      st.write(f"3. 正在按总页数 {total_pages} 页进行高速下载...")
+      st.write(f"3. 正在按总页数 {total_pages} 页尝试下载页面...")
 
       with tempfile.TemporaryDirectory() as tmpdir:
         image_files = []
         progress_bar = st.progress(0)
         valid_count = 0
-        consecutive_failures = 0
 
         for p in range(1, int(total_pages) + 1):
           img_data = None
+          success_url = ""
           
           for base_url in candidate_bases:
               variations = [
@@ -116,9 +86,10 @@ if st.button("开始配置文件逆向转换并生成 PDF", type="primary", use_
               
               for cu in variations:
                   try:
-                      r = requests.get(cu, headers=headers, timeout=3)
-                      if r.status_code == 200 and len(r.content) > 1500:
+                      r = requests.get(cu, headers=headers, timeout=2)
+                      if r.status_code == 200 and len(r.content) > 1000:
                           img_data = r.content
+                          success_url = cu
                           break
                   except:
                       pass
@@ -126,7 +97,6 @@ if st.button("开始配置文件逆向转换并生成 PDF", type="primary", use_
                   break
 
           if img_data:
-              consecutive_failures = 0
               try:
                   tmp_path = os.path.join(tmpdir, f"raw_{p}.jpg")
                   with open(tmp_path, "wb") as f:
@@ -138,18 +108,17 @@ if st.button("开始配置文件逆向转换并生成 PDF", type="primary", use_
 
                   image_files.append(file_path)
                   valid_count += 1
-              except:
-                  pass
+                  st.write(f"✓ 成功下载第 {p} 页 (来源: {success_url})")
+              except Exception as e:
+                  st.write(f"! 第 {p} 页解析图片失败: {e}")
           else:
-              consecutive_failures += 1
-              if consecutive_failures >= 15 and valid_count > 2:
-                  break
+              st.write(f"✗ 第 {p} 页未能在候选 CDN 中命中")
 
           progress_bar.progress(p / total_pages)
 
         if not image_files:
           status.update(label="下载失败", state="error")
-          st.error("未能下载到页面图片。该书可能包含高级防盗链或需要登录鉴权。")
+          st.error("未能下载到任何页面图片。请核对网页链接是否完全正确。")
           st.stop()
 
         st.write(f"4. 成功获取 {len(image_files)} 页高清页面，正在合成为 PDF...")
