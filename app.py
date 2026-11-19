@@ -11,17 +11,18 @@ st.set_page_config(
 )
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
-st.markdown("输入电子书链接，使用**高性能智能直连引擎**秒级生成高质量 PDF！支持 FLBook 和云展网。")
+st.markdown("输入正确的电子书链接，**秒级直连官方 CDN** 完美生成高质量 PDF！")
 
-url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqe/uiqi/mobile/index.html")
-total_pages = st.number_input("图书总页数:", min_value=1, max_value=500, value=25)
+# 默认填入你给的正确链接
+url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqej/uiqj/mobile/index.html")
+total_pages = st.number_input("预估图书总页数:", min_value=1, max_value=500, value=30)
 
-if st.button("开始高速转换并生成 PDF", type="primary", use_container_width=True):
+if st.button("开始一键转换并生成 PDF", type="primary", use_container_width=True):
   if not url:
     st.warning("请输入有效的网址！")
   else:
     with st.status("正在高速下载中...", expanded=True) as status:
-      st.write("1. 正在解析链接中的图书标识与 CDN 前缀...")
+      st.write("1. 正在解析链接中的图书唯一标识...")
       
       headers = {
           "User-Agent": (
@@ -29,16 +30,15 @@ if st.button("开始高速转换并生成 PDF", type="primary", use_container_wi
               "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
           ),
           "Referer": url,
-          "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
       }
 
-      # 提取云展网图书 ID 路径 (例如 yhqe/uiqi)
+      # 精准提取书本路径标识 (例如 yhqej/uiqj)
       book_id_path = ""
       match_id = re.search(r'yunzhan365\.com/([^/]+/[^/]+)', url)
       if match_id:
           book_id_path = match_id.group(1)
+          st.write(f"-> 成功锁定书本 ID 路径：{book_id_path}")
 
-      # 构造所有可能的云展网官方高清图床 CDN 候选路径
       candidate_bases = []
       if book_id_path:
           candidate_bases.extend([
@@ -46,17 +46,14 @@ if st.button("开始高速转换并生成 PDF", type="primary", use_container_wi
               f"https://online.yunzhan365.com/{book_id_path}/files/mobile/",
               f"https://static.yunzhan365.com/{book_id_path}/files/mobile/",
               f"https://book.yunzhan365.com/{book_id_path}/mobile/files/mobile/",
-              f"https://book.yunzhan365.com/{book_id_path}/files/ext/page/",
           ])
       
-      # 通用兜底
       candidate_bases.extend([
           "https://online.yunzhan365.com/files/mobile/",
           "https://book.yunzhan365.com/files/mobile/",
-          "https://flbook.com.cn/files/files/mobile/",
       ])
 
-      st.write(f"2. 正在按总页数 {total_pages} 页进行高速并行下载...")
+      st.write(f"2. 正在按总页数 {total_pages} 页进行高速直连并行下载...")
 
       with tempfile.TemporaryDirectory() as tmpdir:
         image_files = []
@@ -68,7 +65,6 @@ if st.button("开始高速转换并生成 PDF", type="primary", use_container_wi
           img_data = None
           
           for base_url in candidate_bases:
-              # 云展网常见图片命名格式
               variations = [
                   f"{base_url}{p}.jpg",
                   f"{base_url}{p}.png",
@@ -106,14 +102,13 @@ if st.button("开始高速转换并生成 PDF", type="primary", use_container_wi
           else:
               consecutive_failures += 1
               if consecutive_failures >= 8 and valid_count > 2:
-                  # 如果连续多页下载失败且已经抓到了一些页面，说明书到底了
                   break
 
           progress_bar.progress(p / total_pages)
 
         if not image_files:
           status.update(label="下载失败", state="error")
-          st.error("未能下载到任何页面图片。请核对链接是否为该书的公开阅读页。")
+          st.error("未能下载到页面图片。请核对链接是否正确。")
           st.stop()
 
         st.write(f"3. 成功获取 {len(image_files)} 页高清页面，正在合成为 PDF...")
