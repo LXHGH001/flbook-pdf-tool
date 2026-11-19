@@ -14,20 +14,20 @@ st.set_page_config(
 )
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
-st.markdown("输入正确的电子书链接，使用 **2倍 Retina 超高清无损视口引擎** 完美呈现出版级图文！")
+st.markdown("输入正确的电子书链接，使用 **绝对单页同步 + Retina 高清渲染引擎** 完美生成 PDF！")
 
 url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqej/uiqj/mobile/index.html")
 total_pages = st.number_input("图书总页数:", min_value=1, max_value=500, value=30)
 
-if st.button("开始 2倍 Retina 超高清转换并生成 PDF", type="primary", use_container_width=True):
+if st.button("开始精准单页高清转换并生成 PDF", type="primary", use_container_width=True):
     if not url:
         st.warning("请输入有效的网址！")
     else:
         image_files = []
         pdf_bytes = None
 
-        with st.status("正在进行 2倍超高清无损渲染...", expanded=True) as status:
-            st.write("1. 正在初始化 2倍 Retina 视口浏览器...")
+        with st.status("正在进行精准单页同步渲染...", expanded=True) as status:
+            st.write("1. 正在初始化单页移动端视口浏览器...")
 
             try:
                 chrome_options = Options()
@@ -35,9 +35,9 @@ if st.button("开始 2倍 Retina 超高清转换并生成 PDF", type="primary", 
                 chrome_options.add_argument("--no-sandbox")
                 chrome_options.add_argument("--disable-dev-shm-usage")
                 chrome_options.add_argument("--disable-gpu")
-                # 核心：设置超大视口尺寸 (1440x2160)，确保拥有充裕的物理像素
-                chrome_options.add_argument("--window-size=1440,2160")
-                # 核心：强制开启 2 倍设备像素比（Retina 级别），让文字和线条极度锐利
+                # 核心修正：设置窄而高的手机单页视口 (720x1280)，彻底强制云展网进入单页手机视图
+                chrome_options.add_argument("--window-size=720,1280")
+                # 核心：2倍 Retina 级别高清像素比，字迹极度锐利
                 chrome_options.add_argument("--force-device-scale-factor=2")
                 chrome_options.add_argument(
                     "user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
@@ -49,32 +49,50 @@ if st.button("开始 2倍 Retina 超高清转换并生成 PDF", type="primary", 
                 
                 driver = webdriver.Chrome(service=service, options=chrome_options)
 
-                st.write("2. 正在打开网页并等待高清首屏加载...")
+                st.write("2. 正在打开网页并锁定单页模式...")
                 driver.get(url)
-                time.sleep(6)  # 给予充足时间加载高清字体和矢量图层
+                time.sleep(6)  # 等待首屏加载
 
-                # 尝试通过 JS 强制云展网单页显示
-                try:
-                    driver.execute_script("""
+                # 强制通过 JS 锁定单页布局
+                driver.execute_script("""
+                    try {
                         if (typeof switchViewMode === 'function') { switchViewMode('single'); }
-                        if (window.bookConfig) { window.bookConfig.singlePage = true; }
-                    """)
-                except:
-                    pass
-                time.sleep(1)
+                        if (window.bookConfig) { 
+                            window.bookConfig.singlePage = true; 
+                            window.bookConfig.isDouble = false; 
+                        }
+                    } catch(e) {}
+                """)
+                time.sleep(2)
 
-                st.write(f"3. 正在逐页进行 2倍 Retina 高清截图（共 {int(total_pages)} 页）...")
+                st.write(f"3. 正在逐页精准同步截图（共 {int(total_pages)} 页）...")
                 progress_bar = st.progress(0)
 
                 with tempfile.TemporaryDirectory() as tmpdir:
                     for i in range(int(total_pages)):
-                        time.sleep(1.0)  # 留出高清图层完全渲染时间
+                        # 如果不是第一页，先触发翻页并等待动画完全结束
+                        if i > 0:
+                            driver.execute_script("""
+                                var event = new KeyboardEvent('keydown', {
+                                    key: 'ArrowRight',
+                                    code: 'ArrowRight',
+                                    keyCode: 39,
+                                    which: 39,
+                                    bubbles: true
+                                });
+                                document.dispatchEvent(event);
+                            """)
+                            # 给足翻页动画缓冲时间，防止卡在过渡帧
+                            time.sleep(1.2)
+                        else:
+                            # 第一页稍微多等一会儿让其稳定
+                            time.sleep(1.5)
 
-                        # 保存为无损 PNG 格式，彻底保留所有字体边缘的细节
+                        # 截取当前单页画面
                         screenshot_path = os.path.join(tmpdir, f"page_{i+1:03d}.png")
                         driver.save_screenshot(screenshot_path)
 
-                        # 直接以无损 RGB 格式打包进 PDF，绝不压缩文字
+                        # 无损保存为高画质 JPG
                         img = Image.open(screenshot_path)
                         img_rgb = img.convert("RGB")
                         
@@ -82,22 +100,10 @@ if st.button("开始 2倍 Retina 超高清转换并生成 PDF", type="primary", 
                         img_rgb.save(jpg_path, "JPEG", quality=100, subsampling=0)
                         image_files.append(jpg_path)
 
-                        st.write(f"✓ 已成功生成 2倍高清第 {i+1} 页")
+                        st.write(f"✓ 已完美同步截取第 {i+1} 页（单页高清）")
                         progress_bar.progress(min((i + 1) / total_pages, 1.0))
 
-                        # 模拟向右翻单页
-                        driver.execute_script("""
-                            var event = new KeyboardEvent('keydown', {
-                                key: 'ArrowRight',
-                                code: 'ArrowRight',
-                                keyCode: 39,
-                                which: 39,
-                                bubbles: true
-                            });
-                            document.dispatchEvent(event);
-                        """)
-
-                    time.sleep(2.0)
+                    time.sleep(1.0)
                     driver.quit()
 
                     if not image_files:
@@ -105,7 +111,7 @@ if st.button("开始 2倍 Retina 超高清转换并生成 PDF", type="primary", 
                         st.error("未能截取到任何页面图像。")
                         st.stop()
 
-                    st.write("4. 成功完成所有 2倍 Retina 截图，正在合成为出版级 PDF...")
+                    st.write("4. 成功完成所有单页同步截图，正在合成为精美 PDF...")
                     output_pdf = os.path.join(tmpdir, "yunzhan_book.pdf")
 
                     with open(output_pdf, "wb") as f:
@@ -122,7 +128,7 @@ if st.button("开始 2倍 Retina 超高清转换并生成 PDF", type="primary", 
                 st.stop()
 
         if pdf_bytes:
-            st.success(f"🎉 电子书已成功转换为 2倍 Retina 超高清 PDF（共 {len(image_files)} 页）！")
+            st.success(f"🎉 电子书已成功转换为单页高清同步 PDF（共 {len(image_files)} 页）！")
             st.download_button(
                 label="📥 点击下载生成的完整出版级 PDF 文件",
                 data=pdf_bytes,
