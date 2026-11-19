@@ -39,50 +39,94 @@ if st.button("开始转换并生成 PDF", type="primary", use_container_width=Tr
         st.error(f"错误详情: {e}")
         st.stop()
 
-      st.write("2. 正在解析页面图片序列...")
-
-      # 更精确的匹配：寻找形如 mobile/... 或类似翻页书页面的图片链接
-      # 许多 FLBook 页面图片存放在 /files/mobile/ 或包含类似序列
-      # 同时尝试匹配页面中所有高分辨率图片
-      img_urls = re.findall(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png)', html)
+      st.write("2. 正在深度解析图书页数与图片模板...")
 
       page_urls = []
+
+      # 策略 A：尝试在网页源码中寻找高画质移动端图片或连续图片规律
+      # FLBook 常见图片路径特征：包含 mobile/ 或 files/ 且以数字命名
+      img_urls = re.findall(r'https?://[^\s<>"]+?/(?:mobile|shot|pages?)/[^\s<>"]+?\.(?:jpg|jpeg|png)', html)
+      
+      # 如果找不到专属 mobile 路径，匹配所有可能是书页的大图
+      if not img_urls:
+          img_urls = re.findall(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png)', html)
+
+      # 过滤掉头像、logo等
+      filtered_imgs = []
       for u in img_urls:
-        # 过滤掉头像、logo、小图标等，只保留符合书页特征的链接
-        u_lower = u.lower()
-        if any(
-            k in u_lower
-            for k in ["mobile", "shot", "page", "files/files", "book"]
-        ):
-          if (
-              "logo" not in u_lower
-              and "icon" not in u_lower
-              and "avatar" not in u_lower
-          ):
-            if u not in page_urls:
-              page_urls.append(u)
+          u_lower = u.lower()
+          if not any(k in u_lower for k in ["logo", "icon", "avatar", "qrcode", "loading"]):
+              if u not in filtered_imgs:
+                  filtered_imgs.append(u)
 
-      # 如果正则过滤后为空，回退到匹配所有较大图片
-      if not page_urls:
-        page_urls = [
-            u
-            for u in img_urls
-            if "logo" not in u.lower() and "icon" not in u.lower()
-        ]
+      # 策略 B：如果找到了某个典型的图片 URL（例如 .../mobile/1.jpg 或类似结构），推导整本书的页面
+      base_pattern_found = False
+      for u in filtered_imgs:
+          # 寻找形如 .../1.jpg 或 .../page_1.jpg 的结构
+          m = re.search(r'(.+?/)(?:mobile/|shot/|page[s]?/)?(\d+)\.(jpg|jpeg|png)$', u, re.IGNORECASE)
+          if m:
+              prefix, page_num_str, ext = m.groups()
+              # 尝试智能推测总页数（通常翻页书在 10 ~ 300 页之间，这里我们尝试推导到 150 页，或根据检测到的最大页数）
+              # 为了保险，我们通过并发/依次探测后续页码是否存在来获取整本书
+              st.write(f"检测到书页图片模板，正在自动探测整本书籍页数...")
+              
+              # 先把已知的加进去
+              test_prefix = m.group(1)
+              # 让我们尝试往后探测，直到连续 5 页不存在为止
+              valid_book_pages = []
+              
+              # 顺便把前面收集到的所有图片也作为候选
+              for p in range(1, 200): # 最多探测 200 页
+                  # 常见的几种 FLBook 命名格式
+                  candidate_urls = [
+                      f"{test_prefix}mobile/{p}.{ext}",
+                      f"{test_prefix}{p}.{ext}",
+                      f"{test_prefix}shot/{p}.{ext}",
+                      f"{test_prefix}page_{p}.{ext}"
+                  ]
+                  found_this_page = False
+                  for cu in candidate_urls:
+                      try:
+                          head_r = requests.head(cu, headers=headers, timeout=3)
+                          if head_r.status_code == 200:
+                              valid_book_pages.append(cu)
+                              found_this_page = True
+                              break
+                      except:
+                          pass
+                  
+                  # 如果连续多页都找不到，说明书已经结束了
+                  if not found_this_page and p > 10:
+                      # 再多试几次确认真的结束了
+                      consecutive_misses = 0
+                      for check_p in range(p, p + 3):
+                          try:
+                              test_u = f"{test_prefix}mobile/{check_p}.{ext}"
+                              if requests.head(test_u, headers=headers, timeout=2).status_code != 200:
+                                  consecutive_misses += 1
+                          except:
+                              consecutive_misses += 1
+                      if consecutive_misses >= 3:
+                          break
+              
+              if len(valid_book_pages) > 2:
+                  page_urls = valid_book_pages
+                  base_pattern_found = True
+                  break
 
-      # 去重并排序
+      # 如果智能探测没触发，退回到直接使用过滤后的所有图片列表
+      if not base_pattern_found:
+          page_urls = filtered_imgs
+
+      # 去重
       page_urls = list(dict.fromkeys(page_urls))
 
-      if not page_urls or len(page_urls) < 2:
-        status.update(label="解析失败", state="error")
-        st.error(
-            "未能自动从该网页提取到有效的电子书页面图片。该图书可能加密或结构特殊。"
-        )
-        st.stop()
+      if not page_urls or len(page_urls) < 1:
+          status.update(label="解析失败", state="error")
+          st.error("未能自动探测到该图书的完整页面。")
+          st.stop()
 
-      st.write(
-          f"3. 检测到约 {len(page_urls)} 个潜在页面，正在批量下载并校验..."
-      )
+      st.write(f"3. 成功锁定共计 **{len(page_urls)}** 个页面，正在批量下载...")
 
       with tempfile.TemporaryDirectory() as tmpdir:
         image_files = []
@@ -92,39 +136,28 @@ if st.button("开始转换并生成 PDF", type="primary", use_container_width=Tr
         for i, img_url in enumerate(page_urls):
           try:
             r = requests.get(img_url, headers=headers, timeout=10)
-            if r.status_code == 200 and len(r.content) > 5000:  # 排除小图标
-              # 校验是否为真正可读的图片
+            if r.status_code == 200 and len(r.content) > 3000:
               tmp_path = os.path.join(tmpdir, f"raw_{i}.jpg")
               with open(tmp_path, "wb") as f:
                 f.write(r.content)
 
-              # 用 PIL 验证图片有效性
-              img = Image.open(tmp_path)
-              img.verify()
-
-              # 如果验证通过，保存为正式处理的页面
-              file_path = os.path.join(
-                  tmpdir, f"page_{valid_count+1:03d}.jpg"
-              )
-              # 如果原图是 RGBA/PNG，转换成 RGB 以便 img2pdf 处理
+              # 用 PIL 验证并转换格式
               img_rgb = Image.open(tmp_path).convert("RGB")
-              img_rgb.save(file_path, "JPEG")
+              file_path = os.path.join(tmpdir, f"page_{valid_count+1:03d}.jpg")
+              img_rgb.save(file_path, "JPEG", quality=95)
 
               image_files.append(file_path)
               valid_count += 1
           except Exception:
-            # 自动跳过无效或损坏的图片链接
             pass
           progress_bar.progress((i + 1) / len(page_urls))
 
         if not image_files:
-          status.update(label="转换失败", state="error")
-          st.error(
-              "未能成功下载或识别任何有效的书页图片，请检查链接是否正确。"
-          )
+          status.update(label="下载失败", state="error")
+          st.error("下载页面失败，未能获取到任何有效图片。")
           st.stop()
 
-        st.write("4. 正在将页面图片无损合成为 PDF 文件...")
+        st.write("4. 正在将所有页面无损合成为完整的 PDF 文件...")
         output_pdf = os.path.join(tmpdir, "flbook_output.pdf")
 
         with open(output_pdf, "wb") as f:
@@ -135,11 +168,11 @@ if st.button("开始转换并生成 PDF", type="primary", use_container_width=Tr
 
         status.update(label="转换成功！", state="complete")
 
-    st.success("🎉 电子书已成功转换为 PDF！")
+    st.success(f"🎉 电子书已成功转换为 PDF（共 {len(image_files)} 页）！")
     st.download_button(
-        label="📥 点击下载生成的 PDF 文件",
+        label="📥 点击下载生成的完整 PDF 文件",
         data=pdf_bytes,
-        file_name="flbook_converted.pdf",
+        file_name="flbook_full.pdf",
         mime="application/pdf",
-        use_container_width=True,
+        use_container_width=True
     )
