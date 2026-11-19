@@ -2,3 +2,4 @@ streamlit
 requests
 img2pdf
 pillow
+selenium
