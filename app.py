@@ -14,20 +14,20 @@ st.set_page_config(
 )
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
-st.markdown("输入正确的电子书链接，使用 **极速单页高清渲染引擎** 秒级生成出版级 PDF！")
+st.markdown("输入正确的电子书链接，使用 **防漂移单页锁定引擎** 生成完美的出版级 PDF！")
 
 url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqej/uiqj/mobile/index.html")
-total_pages = st.number_input("预估图书总页数 (可适当填大，会自动提前完成):", min_value=1, max_value=500, value=30)
+total_pages = st.number_input("预估图书总页数 (支持智能到底自动结束):", min_value=1, max_value=500, value=30)
 
-if st.button("开始极速高清转换并生成 PDF", type="primary", use_container_width=True):
+if st.button("开始防漂移高清转换并生成 PDF", type="primary", use_container_width=True):
     if not url:
         st.warning("请输入有效的网址！")
     else:
         image_files = []
         pdf_bytes = None
 
-        with st.status("正在进行极速高清渲染...", expanded=True) as status:
-            st.write("1. 正在初始化极速单页视口浏览器...")
+        with st.status("正在进行防漂移高清渲染...", expanded=True) as status:
+            st.write("1. 正在初始化防漂移单页视口浏览器...")
 
             try:
                 chrome_options = Options()
@@ -35,8 +35,8 @@ if st.button("开始极速高清转换并生成 PDF", type="primary", use_contai
                 chrome_options.add_argument("--no-sandbox")
                 chrome_options.add_argument("--disable-dev-shm-usage")
                 chrome_options.add_argument("--disable-gpu")
-                # 手机竖屏单页视口 (720x1280) + 2倍高清 Retina 像素比
-                chrome_options.add_argument("--window-size=720,1280")
+                # 核心修正：采用更极端的竖屏长条比例 (600x1100) + 2倍 Retina 像素比，彻底锁死单页
+                chrome_options.add_argument("--window-size=600,1100")
                 chrome_options.add_argument("--force-device-scale-factor=2")
                 chrome_options.add_argument(
                     "user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
@@ -52,7 +52,7 @@ if st.button("开始极速高清转换并生成 PDF", type="primary", use_contai
                 driver.get(url)
                 time.sleep(5)  # 等待首屏加载
 
-                # 尝试强制单页模式
+                # 强制单页模式与横向滚动锁定
                 driver.execute_script("""
                     try {
                         if (typeof switchViewMode === 'function') { switchViewMode('single'); }
@@ -61,7 +61,7 @@ if st.button("开始极速高清转换并生成 PDF", type="primary", use_contai
                 """)
                 time.sleep(1)
 
-                st.write(f"3. 正在极速逐页截图（上限 {int(total_pages)} 页，支持智能到底）...")
+                st.write(f"3. 正在逐页防漂移高清截图（上限 {int(total_pages)} 页，支持智能到底）...")
                 progress_bar = st.progress(0)
 
                 with tempfile.TemporaryDirectory() as tmpdir:
@@ -69,8 +69,8 @@ if st.button("开始极速高清转换并生成 PDF", type="primary", use_contai
                     consecutive_same_pages = 0
 
                     for i in range(int(total_pages)):
-                        # 翻页时机匹配
                         if i > 0:
+                            # 触发向右翻页
                             driver.execute_script("""
                                 var event = new KeyboardEvent('keydown', {
                                     key: 'ArrowRight',
@@ -81,21 +81,22 @@ if st.button("开始极速高清转换并生成 PDF", type="primary", use_contai
                                 });
                                 document.dispatchEvent(event);
                             """)
-                            time.sleep(0.7)  # 极速平滑等待
-                        else:
-                            time.sleep(1.0)
+                            time.sleep(0.8)
+
+                        # 核心防漂移：每次截图前，强制将页面横向和纵向滚动条归零，彻底防止画面向右偏移！
+                        driver.execute_script("window.scrollTo(0, 0);")
+                        time.sleep(0.3)  # 留出归零渲染缓冲
 
                         # 截取当前单页
                         screenshot_path = os.path.join(tmpdir, f"page_{i+1:03d}.png")
                         driver.save_screenshot(screenshot_path)
 
-                        # 智能去重检测：如果连续两页截图大小完全一样，说明书已经翻到最后一页了，自动结束！
+                        # 智能去重到底检测
                         current_size = os.path.getsize(screenshot_path)
                         if i > 0 and current_size == last_screenshot_size:
                             consecutive_same_pages += 1
                             if consecutive_same_pages >= 2:
                                 st.write(f"-> 检测到已到达书本末尾，提前结束截取（共 {i} 页）。")
-                                # 删掉最后一张重复的图
                                 os.remove(screenshot_path)
                                 break
                         else:
@@ -111,7 +112,7 @@ if st.button("开始极速高清转换并生成 PDF", type="primary", use_contai
                         img_rgb.save(jpg_path, "JPEG", quality=98, subsampling=0)
                         image_files.append(jpg_path)
 
-                        st.write(f"✓ 已成功生成第 {i+1} 页高清单页")
+                        st.write(f"✓ 已完美锁定并生成第 {i+1} 页单页高清图")
                         progress_bar.progress(min((i + 1) / total_pages, 1.0))
 
                     driver.quit()
@@ -121,7 +122,7 @@ if st.button("开始极速高清转换并生成 PDF", type="primary", use_contai
                         st.error("未能截取到任何页面图像。")
                         st.stop()
 
-                    st.write("4. 成功完成所有单页截图，正在极速合成为 PDF...")
+                    st.write("4. 成功完成所有防漂移截图，正在极速合成为 PDF...")
                     output_pdf = os.path.join(tmpdir, "yunzhan_book.pdf")
 
                     with open(output_pdf, "wb") as f:
@@ -138,7 +139,7 @@ if st.button("开始极速高清转换并生成 PDF", type="primary", use_contai
                 st.stop()
 
         if pdf_bytes:
-            st.success(f"🎉 电子书已成功转换为极速单页高清 PDF（共 {len(image_files)} 页）！")
+            st.success(f"🎉 电子书已成功转换为防漂移单页高清 PDF（共 {len(image_files)} 页）！")
             st.download_button(
                 label="📥 点击下载生成的完整出版级 PDF 文件",
                 data=pdf_bytes,
