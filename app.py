@@ -19,14 +19,14 @@ st.title("📚 FLBook & 云展网电子书转 PDF 工具")
 st.markdown("输入正确的电子书链接，使用 **系统原生 Chromium 浏览器内核** 完美渲染并生成 PDF！")
 
 url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqej/uiqj/mobile/index.html")
-total_pages = st.number_input("预估图书总页数 (测试时可填 3):", min_value=1, max_value=500, value=3)
+total_pages = st.number_input("预估图书总页数:", min_value=1, max_value=500, value=30)
 
 if st.button("启动系统浏览器内核渲染并生成 PDF", type="primary", use_container_width=True):
   if not url:
     st.warning("请输入有效的网址！")
   else:
     with st.status("正在通过系统 Chromium 渲染...", expanded=True) as status:
-      st.write("1.正在初始化系统原生 Chromium...")
+      st.write("1. 正在初始化系统原生 Chromium...")
       
       image_urls_captured = []
 
@@ -42,7 +42,6 @@ if st.button("启动系统浏览器内核渲染并生成 PDF", type="primary", u
             "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
         )
 
-        # 核心：直接调用 Debian 系统安装的 chromium 和 chromedriver
         chrome_options.binary_location = "/usr/bin/chromium"
         service = Service("/usr/bin/chromedriver")
         
@@ -54,11 +53,17 @@ if st.button("启动系统浏览器内核渲染并生成 PDF", type="primary", u
 
         st.write(f"3. 正在自动模拟翻页（共 {total_pages} 页）以触发图片加载...")
         progress_bar = st.progress(0)
-        body = driver.find_element("tag name", "body")
 
         for i in range(int(total_pages)):
-          body.send_keys(Keys.ARROW_RIGHT)
-          time.sleep(0.8)
+          # 每次循环重新定位 body 元素，彻底避免 stale element 错误
+          try:
+              body = driver.find_element("tag name", "body")
+              body.send_keys(Keys.ARROW_RIGHT)
+          except:
+              # 备用：通过 JS 触发键盘右键事件
+              driver.execute_script("window.dispatchEvent(new KeyboardEvent('keydown', {'key': 'ArrowRight'}));")
+
+          time.sleep(0.7)  # 留出图片渲染时间
           
           # 实时从网页中收集所有图片标签的 src
           imgs = driver.find_elements("tag name", "img")
