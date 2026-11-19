@@ -12,53 +12,83 @@ st.set_page_config(
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
 st.markdown(
-    "输入电子书链接和总页数，一键自动批量组装整本书并生成高质量 PDF！支持"
+    "输入电子书链接，一键自动解析配置并生成高质量 PDF！支持"
     " **FLBook (`flbook.com.cn`)** 和 **云展网 (`yunzhan365.com`)**。"
 )
 
 url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqe/uiqi/mobile/index.html")
-total_pages = st.number_input("请输入图书总页数 (如果不清楚可填大概页数):", min_value=1, max_value=1000, value=30)
+fallback_pages = st.number_input("如果未能自动识别页数，手动指定大概总页数:", min_value=1, max_value=1000, value=30)
 
-if st.button("开始批量抓取并生成 PDF", type="primary", use_container_width=True):
+if st.button("开始智能解析并生成 PDF", type="primary", use_container_width=True):
   if not url:
     st.warning("请输入有效的网址！")
   else:
-    with st.status("正在处理中...", expanded=True) as status:
-      st.write("1. 正在解析链接中的图书唯一标识...")
+    with st.status("正在智能解析中...", expanded=True) as status:
+      st.write("1. 正在访问网页并提取图书底层配置...")
       headers = {
           "User-Agent": (
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
               " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
           ),
-          "Referer": "https://book.yunzhan365.com/",
+          "Referer": url,
       }
+      try:
+        resp = requests.get(url, headers=headers, timeout=15)
+        html = resp.text
+      except Exception as e:
+        status.update(label="访问网页失败", state="error")
+        st.error(f"错误详情: {e}")
+        st.stop()
 
-      possible_prefixes = []
+      st.write("2. 正在分析图书页数与图片直链规则...")
 
-      # 针对云展网提取路径：例如 https://book.yunzhan365.com/yhqe/uiqi/mobile/index.html -> yhqe/uiqi
-      if "yunzhan365.com" in url:
-          match_yz = re.search(r'yunzhan365\.com/([^/]+/[^/]+)', url)
-          if match_yz:
-              book_path = match_yz.group(1) # 例如 yhqe/uiqi
-              possible_prefixes.append(f"https://online.yunzhan365.com/{book_path}/files/mobile/")
-              possible_prefixes.append(f"https://book.yunzhan365.com/{book_path}/files/mobile/")
-              possible_prefixes.append(f"https://static.yunzhan365.com/{book_path}/files/mobile/")
-          
-          # 备用：直接从 URL 提取所有斜杠路径组合
-          parts = url.split('/')
-          if len(parts) >= 5:
-              base_p = f"{parts[0]}//{parts[2]}/{parts[3]}/{parts[4]}/files/mobile/"
-              possible_prefixes.append(base_p)
-
-      # 针对 FLBook
-      if "flbook.com.cn" in url:
-          possible_prefixes.append("https://flbook.com.cn/files/files/mobile/")
-          possible_prefixes.append("https://flbook.com.cn/files/files/")
-
-      # 通用兜底
-      possible_prefixes.append("https://online.yunzhan365.com/files/mobile/")
+      page_urls = []
       
-      st.write(f"2. 已锁定目标目录，开始按总页数 {total_pages} 页批量下载高清页面...")
+      # 策略 A：尝试从云展网/FLBook 页面中直接寻找引用的外部 JS 配置文件（如 bookConfig.js 或 config.js）
+      script_srcs = re.findall(r'<script[^>]*src=["\']([^"\']+)["\'][^>]*>', html)
+      config_html = html
+      
+      for src in script_srcs:
+          if "config" in src or "book" in src or "javascript" in src:
+              if not src.startswith("http"):
+                  # 拼接绝对路径
+                  from urllib.parse import urljoin
+                  src = urljoin(url, src)
+              try:
+                  sr = requests.get(src, headers=headers, timeout=5)
+                  if sr.status_code == 200:
+                      config_html += "\n" + sr.text
+              except:
+                  pass
+
+      # 尝试在源码中匹配总页数
+      total_pages = fallback_pages
+      page_match = re.search(r'(?:pageCount|totalPages|totalPage|sumPages)\s*[:=]\s*(\d+)', config_html, re.IGNORECASE)
+      if page_match:
+          detected_pages = int(page_match.group(1))
+          if detected_pages > 2:
+              total_pages = detected_pages
+              st.write(f"-> 成功自动识别到图书总页数：{total_pages} 页")
+
+      # 尝试提取图片 URL 模板前缀
+      # 云展网通常图片存放在类似 https://online.yunzhan365.com/xxx/files/mobile/1.jpg
+      img_base = None
+      
+      # 寻找形如 .../files/mobile/ 的路径
+      m_base = re.search(r'(https?://[^/]+/.+?/files/mobile/)', config_html)
+      if m_base:
+          img_base = m_base.group(1)
+      else:
+          # 尝试从 URL 直接推导
+          if "yunzhan365.com" in url:
+              match_yz = re.search(r'(https?://[^/]+/[^/]+/[^/]+)', url)
+              if match_yz:
+                  img_base = match_yz.group(1) + "/files/mobile/"
+
+      if not img_base:
+          img_base = "https://online.yunzhan365.com/files/mobile/"
+
+      st.write(f"3. 锁定目标图床，准备批量下载 {total_pages} 页高清页面...")
 
       with tempfile.TemporaryDirectory() as tmpdir:
         image_files = []
@@ -67,27 +97,25 @@ if st.button("开始批量抓取并生成 PDF", type="primary", use_container_wi
         valid_count = 0
         for p in range(1, int(total_pages) + 1):
           img_data = None
+          candidate_urls = [
+              f"{img_base}{p}.jpg",
+              f"{img_base}{p}.png",
+              f"{img_base}page_{p}.jpg",
+              f"{img_base}{p:02d}.jpg",
+              f"{img_base}{p:03d}.jpg",
+              # 兼容备用目录
+              f"https://online.yunzhan365.com/files/mobile/{p}.jpg",
+              f"https://book.yunzhan365.com/files/mobile/{p}.jpg"
+          ]
           
-          # 依次尝试每个候选前缀和常见后缀
-          for bp in possible_prefixes:
-              candidate_urls = [
-                  f"{bp}{p}.jpg",
-                  f"{bp}{p}.png",
-                  f"{bp}page_{p}.jpg",
-                  f"{bp}{p:02d}.jpg",
-                  f"{bp}{p:03d}.jpg"
-              ]
-              
-              for cu in candidate_urls:
-                  try:
-                      r = requests.get(cu, headers=headers, timeout=3)
-                      if r.status_code == 200 and len(r.content) > 2000:
-                          img_data = r.content
-                          break
-                  except:
-                      pass
-              if img_data:
-                  break
+          for cu in candidate_urls:
+              try:
+                  r = requests.get(cu, headers=headers, timeout=3)
+                  if r.status_code == 200 and len(r.content) > 2000:
+                      img_data = r.content
+                      break
+              except:
+                  pass
 
           if img_data:
               try:
@@ -108,10 +136,10 @@ if st.button("开始批量抓取并生成 PDF", type="primary", use_container_wi
 
         if not image_files:
           status.update(label="下载失败", state="error")
-          st.error("未能下载到任何页面图片。请核对该云展网链接是否正确（需包含具体的书本路径，如 /yhqe/uiqi/）。")
+          st.error("未能下载到页面图片。该云展网链接可能受密码保护或采用了非标准加密存储。")
           st.stop()
 
-        st.write(f"3. 成功获取 {len(image_files)} 页，正在无损合成为完整的 PDF...")
+        st.write(f"4. 成功获取 {len(image_files)} 页，正在无损合成为完整的 PDF...")
         output_pdf = os.path.join(tmpdir, "book_full.pdf")
 
         with open(output_pdf, "wb") as f:
