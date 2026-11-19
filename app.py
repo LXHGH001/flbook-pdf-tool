@@ -14,20 +14,20 @@ st.set_page_config(
 )
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
-st.markdown("输入正确的电子书链接，使用 **无头浏览器高清视口截图引擎** 完美保留图文并生成 PDF！")
+st.markdown("输入正确的电子书链接，使用 **单页高清视口截图引擎** 完美呈现每一页的高清图文！")
 
 url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqej/uiqj/mobile/index.html")
 total_pages = st.number_input("图书总页数:", min_value=1, max_value=500, value=30)
 
-if st.button("开始高清截图转换并生成 PDF", type="primary", use_container_width=True):
+if st.button("开始单页高清截图并生成 PDF", type="primary", use_container_width=True):
     if not url:
         st.warning("请输入有效的网址！")
     else:
         image_files = []
         pdf_bytes = None
 
-        with st.status("正在进行高清截图渲染...", expanded=True) as status:
-            st.write("1. 正在初始化系统原生 Chromium...")
+        with st.status("正在进行单页高清渲染...", expanded=True) as status:
+            st.write("1. 正在初始化单页高清视口浏览器...")
 
             try:
                 chrome_options = Options()
@@ -35,7 +35,8 @@ if st.button("开始高清截图转换并生成 PDF", type="primary", use_contai
                 chrome_options.add_argument("--no-sandbox")
                 chrome_options.add_argument("--disable-dev-shm-usage")
                 chrome_options.add_argument("--disable-gpu")
-                chrome_options.add_argument("--window-size=800,1200")
+                # 核心：设置为标准的单页竖屏手机尺寸 (430x932)，强制云展网以单页大图模式渲染
+                chrome_options.add_argument("--window-size=430,932")
                 chrome_options.add_argument(
                     "user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
                     "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
@@ -46,16 +47,25 @@ if st.button("开始高清截图转换并生成 PDF", type="primary", use_contai
                 
                 driver = webdriver.Chrome(service=service, options=chrome_options)
 
-                st.write("2. 正在打开网页并等待初始化...")
+                st.write("2. 正在打开网页并等待单页初始化...")
                 driver.get(url)
                 time.sleep(5)  # 等待首屏加载
 
-                st.write(f"3. 正在逐页翻页并进行高清截图（共 {int(total_pages)} 页）...")
+                # 尝试通过 JS 强制云展网切换为单页模式（如果支持的话）
+                try:
+                    driver.execute_script("""
+                        if (window.bookConfig) { window.bookConfig.singlePage = true; }
+                        if (typeof switchViewMode === 'function') { switchViewMode('single'); }
+                    """)
+                except:
+                    pass
+
+                st.write(f"3. 正在逐页单页翻页并进行高清截图（共 {int(total_pages)} 页）...")
                 progress_bar = st.progress(0)
 
                 with tempfile.TemporaryDirectory() as tmpdir:
                     for i in range(int(total_pages)):
-                        time.sleep(0.8)
+                        time.sleep(0.9)  # 留出单页高清渲染时间
 
                         screenshot_path = os.path.join(tmpdir, f"page_{i+1:03d}.png")
                         driver.save_screenshot(screenshot_path)
@@ -65,10 +75,10 @@ if st.button("开始高清截图转换并生成 PDF", type="primary", use_contai
                         img_rgb.save(jpg_path, "JPEG", quality=95)
                         image_files.append(jpg_path)
 
-                        st.write(f"✓ 已成功截取并保存第 {i+1} 页（含图文）")
+                        st.write(f"✓ 已成功截取单页高清第 {i+1} 页")
                         progress_bar.progress(min((i + 1) / total_pages, 1.0))
 
-                        # 模拟向右翻页
+                        # 模拟向右翻单页
                         driver.execute_script("""
                             var event = new KeyboardEvent('keydown', {
                                 key: 'ArrowRight',
@@ -88,7 +98,7 @@ if st.button("开始高清截图转换并生成 PDF", type="primary", use_contai
                         st.error("未能截取到任何页面图像。")
                         st.stop()
 
-                    st.write("4. 成功完成所有页面截图，正在合成为完整 PDF...")
+                    st.write("4. 成功完成所有单页高清截图，正在合成为精美 PDF...")
                     output_pdf = os.path.join(tmpdir, "yunzhan_book.pdf")
 
                     with open(output_pdf, "wb") as f:
@@ -105,7 +115,7 @@ if st.button("开始高清截图转换并生成 PDF", type="primary", use_contai
                 st.stop()
 
         if pdf_bytes:
-            st.success(f"🎉 电子书已成功转换为高清晰度图文 PDF（共 {len(image_files)} 页）！")
+            st.success(f"🎉 电子书已成功转换为单页高清图文 PDF（共 {len(image_files)} 页）！")
             st.download_button(
                 label="📥 点击下载生成的完整 PDF 文件",
                 data=pdf_bytes,
