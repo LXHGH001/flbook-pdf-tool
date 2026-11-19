@@ -50,11 +50,11 @@ if st.button("启动系统浏览器内核渲染并生成 PDF", type="primary", u
         driver.get(url)
         time.sleep(5)  # 等待 JS 动态加载
 
-        st.write(f"3. 正在通过纯 JS 触发模拟翻页（共 {total_pages} 页）...")
+        st.write(f"3. 正在通过纯 JS 触发模拟翻页并收集图片（共 {total_pages} 页）...")
         progress_bar = st.progress(0)
 
         for i in range(int(total_pages)):
-          # 核心：使用纯 JavaScript 触发键盘右键事件，绝对不会报 stale element 错误！
+          # 纯 JS 触发翻页键
           driver.execute_script("""
               var event = new KeyboardEvent('keydown', {
                   key: 'ArrowRight',
@@ -68,10 +68,19 @@ if st.button("启动系统浏览器内核渲染并生成 PDF", type="primary", u
 
           time.sleep(0.7)  # 留出图片渲染时间
           
-          # 实时从网页中收集所有图片标签的 src
-          imgs = driver.find_elements("tag name", "img")
-          for img in imgs:
-              src = img.get_attribute("src")
+          # 核心修复：通过安全 JS 直接获取当前页面所有图片的 src 字符串列表，彻底杜绝 stale element 错误！
+          current_page_srcs = driver.execute_script("""
+              var srcs = [];
+              var imgs = document.getElementsByTagName('img');
+              for (var j = 0; j < imgs.length; j++) {
+                  if (imgs[j].src) {
+                      srcs.push(imgs[j].src);
+                  }
+              }
+              return srcs;
+          """)
+
+          for src in current_page_srcs:
               if src and src not in image_urls_captured:
                   if any(k in src.lower() for k in ["mobile", "files", "page", "ext", "yhqej"]):
                       image_urls_captured.append(src)
@@ -80,9 +89,18 @@ if st.button("启动系统浏览器内核渲染并生成 PDF", type="primary", u
 
         time.sleep(2)
         
-        # 兜底全盘扫描
-        for img in driver.find_elements("tag name", "img"):
-            src = img.get_attribute("src")
+        # 最终兜底全盘扫描一次
+        final_srcs = driver.execute_script("""
+            var srcs = [];
+            var imgs = document.getElementsByTagName('img');
+            for (var j = 0; j < imgs.length; j++) {
+                if (imgs[j].src) {
+                    srcs.push(imgs[j].src);
+                }
+            }
+            return srcs;
+        """)
+        for src in final_srcs:
             if src and src not in image_urls_captured:
                 image_urls_captured.append(src)
 
