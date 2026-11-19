@@ -7,14 +7,7 @@ import requests
 import streamlit as st
 import asyncio
 
-# 检查并自动安装 Playwright 浏览器内核
-import subprocess
-try:
-    from playwright.async_api import async_playwright
-except ImportError:
-    subprocess.run(["pip", "install", "playwright"])
-    subprocess.run(["playwright", "install", "chromium"])
-    from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright
 
 st.set_page_config(
     page_title="FLBook & 云展网转 PDF 工具", page_icon="📚", layout="centered"
@@ -29,6 +22,7 @@ total_pages = st.number_input("预估图书总页数 (测试时可填 3):", min_
 async def scrape_book(target_url, pages):
     image_urls = []
     async with async_playwright() as p:
+        # 启动无头浏览器
         browser = await p.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
@@ -39,13 +33,13 @@ async def scrape_book(target_url, pages):
         )
         page = await context.new_page()
         
-        # 拦截页面所有的网络请求，直接捕获真实图片 CDN 地址！
+        # 拦截所有网络请求，精准捕获图片 CDN 直链
         page.on("request", lambda req: image_urls.append(req.url) if any(k in req.url.lower() for k in [".jpg", ".png", "files/mobile", "ext/page"]) else None)
 
         await page.goto(target_url, timeout=60000)
-        await page.wait_for_timeout(4000) # 等待页面 JS 动态加载
+        await page.wait_for_timeout(4000)
 
-        # 模拟自动翻页，触发后面页面的图片加载
+        # 模拟翻页触发加载
         for _ in range(int(pages)):
             await page.keyboard.press("ArrowRight")
             await page.wait_for_timeout(600)
@@ -61,7 +55,6 @@ if st.button("启动真实浏览器内核渲染并生成 PDF", type="primary", u
       st.write("1. 正在云端启动无头 Chromium 浏览器...")
       
       try:
-          # 在 Streamlit 的同步环境运行异步 Playwright
           loop = asyncio.new_event_loop()
           asyncio.set_event_loop(loop)
           captured_links = loop.run_until_complete(scrape_book(url, total_pages))
@@ -72,7 +65,6 @@ if st.button("启动真实浏览器内核渲染并生成 PDF", type="primary", u
 
       st.write(f"2. 浏览器网络拦截成功，捕获到 {len(captured_links)} 个资源链接，正在筛选高清书页...")
 
-      # 过滤出真正的图片直链
       valid_img_urls = []
       for link in captured_links:
           if any(ext in link.lower() for ext in [".jpg", ".jpeg", ".png"]) and not any(ic in link.lower() for ic in ["icon", "logo", "avatar", "thumb"]):
@@ -90,7 +82,7 @@ if st.button("启动真实浏览器内核渲染并生成 PDF", type="primary", u
         image_files = []
         valid_count = 0
 
-        for i, img_url in enumerate(valid_img_urls[:int(total_pages)*2]): # 取前部分
+        for i, img_url in enumerate(valid_img_urls[:int(pages)*2] if 'pages' in locals() else valid_img_urls):
           try:
             r = requests.get(img_url, timeout=5)
             if r.status_code == 200 and len(r.content) > 3000:
