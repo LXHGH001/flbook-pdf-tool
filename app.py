@@ -9,8 +9,6 @@ import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from webdriver_manager.core.os_manager import ChromeType
 from selenium.webdriver.common.keys import Keys
 
 st.set_page_config(
@@ -18,7 +16,7 @@ st.set_page_config(
 )
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
-st.markdown("输入电子书链接，使用**全自动无头浏览器内核**完美穿透并生成高质量 PDF！")
+st.markdown("输入电子书链接，使用**云端系统浏览器内核**完美穿透并生成高质量 PDF！")
 
 url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqe/uiqi/mobile/index.html")
 total_pages = st.number_input("图书总页数 (用于控制自动翻页次数):", min_value=1, max_value=500, value=20)
@@ -27,8 +25,8 @@ if st.button("启动浏览器内核抓取", type="primary", use_container_width=
   if not url:
     st.warning("请输入有效的网址！")
   else:
-    with st.status("正在通过无头浏览器内核渲染...", expanded=True) as status:
-      st.write("1. 正在云端初始化 Chrome 浏览器内核...")
+    with st.status("正在通过云端系统浏览器内核渲染...", expanded=True) as status:
+      st.write("1. 正在初始化系统 Chromium 浏览器...")
       image_urls_captured = []
 
       try:
@@ -43,7 +41,10 @@ if st.button("启动浏览器内核抓取", type="primary", use_container_width=
             "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
         )
 
-        service = Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install())
+        # 直接使用 Streamlit 云端自带的 chromium 和 chromedriver
+        chrome_options.binary_location = "/usr/bin/chromium"
+        service = Service("/usr/bin/chromedriver")
+        
         driver = webdriver.Chrome(service=service, options=chrome_options)
 
         st.write("2. 正在打开网页并建立会话...")
@@ -58,7 +59,6 @@ if st.button("启动浏览器内核抓取", type="primary", use_container_width=
           body.send_keys(Keys.ARROW_RIGHT)
           time.sleep(0.6)
           
-          # 实时收集页面所有图片
           imgs = driver.find_elements("tag name", "img")
           for img in imgs:
               src = img.get_attribute("src")
@@ -70,7 +70,6 @@ if st.button("启动浏览器内核抓取", type="primary", use_container_width=
 
         time.sleep(3)
         
-        # 兜底再扫一遍
         for img in driver.find_elements("tag name", "img"):
             src = img.get_attribute("src")
             if src and src not in image_urls_captured:
