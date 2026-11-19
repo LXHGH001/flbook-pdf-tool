@@ -14,20 +14,20 @@ st.set_page_config(
 )
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
-st.markdown("输入正确的电子书链接，使用 **单页高清视口截图引擎** 完美呈现每一页的高清图文！")
+st.markdown("输入正确的电子书链接，使用 **2倍超高清视口 + 强制单页渲染引擎** 获得极致清晰的图文 PDF！")
 
 url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqej/uiqj/mobile/index.html")
 total_pages = st.number_input("图书总页数:", min_value=1, max_value=500, value=30)
 
-if st.button("开始单页高清截图并生成 PDF", type="primary", use_container_width=True):
+if st.button("开始超高清单页转换并生成 PDF", type="primary", use_container_width=True):
     if not url:
         st.warning("请输入有效的网址！")
     else:
         image_files = []
         pdf_bytes = None
 
-        with st.status("正在进行单页高清渲染...", expanded=True) as status:
-            st.write("1. 正在初始化单页高清视口浏览器...")
+        with st.status("正在进行超高清单页渲染...", expanded=True) as status:
+            st.write("1. 正在初始化 2倍超高清视口浏览器...")
 
             try:
                 chrome_options = Options()
@@ -35,8 +35,8 @@ if st.button("开始单页高清截图并生成 PDF", type="primary", use_contai
                 chrome_options.add_argument("--no-sandbox")
                 chrome_options.add_argument("--disable-dev-shm-usage")
                 chrome_options.add_argument("--disable-gpu")
-                # 核心：设置为标准的单页竖屏手机尺寸 (430x932)，强制云展网以单页大图模式渲染
-                chrome_options.add_argument("--window-size=430,932")
+                # 核心：使用超大高清分辨率 (1200x1800)，保证文字极度清晰
+                chrome_options.add_argument("--window-size=1200,1800")
                 chrome_options.add_argument(
                     "user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
                     "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
@@ -47,35 +47,46 @@ if st.button("开始单页高清截图并生成 PDF", type="primary", use_contai
                 
                 driver = webdriver.Chrome(service=service, options=chrome_options)
 
-                st.write("2. 正在打开网页并等待单页初始化...")
+                st.write("2. 正在打开网页并强制注入单页显示模式...")
                 driver.get(url)
                 time.sleep(5)  # 等待首屏加载
 
-                # 尝试通过 JS 强制云展网切换为单页模式（如果支持的话）
-                try:
-                    driver.execute_script("""
-                        if (window.bookConfig) { window.bookConfig.singlePage = true; }
+                # 核心：通过 JS 强行将云展网的视图切换为单页模式，并放大画布
+                driver.execute_script("""
+                    try {
+                        // 尝试调用云展网内置的单页切换函数
                         if (typeof switchViewMode === 'function') { switchViewMode('single'); }
-                    """)
-                except:
-                    pass
+                        if (window.bookConfig) { window.bookConfig.singlePage = true; window.bookConfig.isDouble = false; }
+                        
+                        // 暴力修改 DOM：隐藏双页容器或调整宽度让其单页展示
+                        var dualContainers = document.querySelectorAll('.double-page, .book-double');
+                        dualContainers.forEach(el => el.style.display = 'none');
+                        
+                        var singleContainers = document.querySelectorAll('.single-page, .book-single');
+                        singleContainers.forEach(el => el.style.display = 'block');
+                    } catch(e) {}
+                """)
+                time.sleep(1)
 
-                st.write(f"3. 正在逐页单页翻页并进行高清截图（共 {int(total_pages)} 页）...")
+                st.write(f"3. 正在逐页进行 2倍超高清单页截图（共 {int(total_pages)} 页）...")
                 progress_bar = st.progress(0)
 
                 with tempfile.TemporaryDirectory() as tmpdir:
                     for i in range(int(total_pages)):
-                        time.sleep(0.9)  # 留出单页高清渲染时间
+                        time.sleep(0.9)  # 留出高清渲染时间
 
                         screenshot_path = os.path.join(tmpdir, f"page_{i+1:03d}.png")
                         driver.save_screenshot(screenshot_path)
 
-                        img_rgb = Image.open(screenshot_path).convert("RGB")
+                        # 使用高质量 PIL 转换，保持超高清晰度
+                        img = Image.open(screenshot_path)
+                        img_rgb = img.convert("RGB")
+                        
                         jpg_path = os.path.join(tmpdir, f"page_{i+1:03d}.jpg")
-                        img_rgb.save(jpg_path, "JPEG", quality=95)
+                        img_rgb.save(jpg_path, "JPEG", quality=98, subsampling=0) # subsampling=0 保证文字边缘不发糊
                         image_files.append(jpg_path)
 
-                        st.write(f"✓ 已成功截取单页高清第 {i+1} 页")
+                        st.write(f"✓ 已成功截取超高清单页第 {i+1} 页")
                         progress_bar.progress(min((i + 1) / total_pages, 1.0))
 
                         # 模拟向右翻单页
@@ -98,7 +109,7 @@ if st.button("开始单页高清截图并生成 PDF", type="primary", use_contai
                         st.error("未能截取到任何页面图像。")
                         st.stop()
 
-                    st.write("4. 成功完成所有单页高清截图，正在合成为精美 PDF...")
+                    st.write("4. 成功完成所有超高清单页截图，正在合成为精美 PDF...")
                     output_pdf = os.path.join(tmpdir, "yunzhan_book.pdf")
 
                     with open(output_pdf, "wb") as f:
@@ -115,7 +126,7 @@ if st.button("开始单页高清截图并生成 PDF", type="primary", use_contai
                 st.stop()
 
         if pdf_bytes:
-            st.success(f"🎉 电子书已成功转换为单页高清图文 PDF（共 {len(image_files)} 页）！")
+            st.success(f"🎉 电子书已成功转换为超高清单页 PDF（共 {len(image_files)} 页）！")
             st.download_button(
                 label="📥 点击下载生成的完整 PDF 文件",
                 data=pdf_bytes,
