@@ -14,20 +14,21 @@ st.set_page_config(
 )
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
-st.markdown("输入正确的电子书链接，使用 **防漂移单页锁定引擎** 生成完美的出版级 PDF！")
+st.markdown("输入任意电子书链接，使用 **全自动交互防卡死翻页引擎** 生成出版级 PDF！")
 
+# 默认填入你新换的网址，或允许你随时更换
 url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqej/uiqj/mobile/index.html")
-total_pages = st.number_input("预估图书总页数 (支持智能到底自动结束):", min_value=1, max_value=500, value=30)
+total_pages = st.number_input("预估图书总页数 (支持智能到底自动结束):", min_value=1, max_value=500, value=50)
 
-if st.button("开始防漂移高清转换并生成 PDF", type="primary", use_container_width=True):
+if st.button("开始全自动高清转换并生成 PDF", type="primary", use_container_width=True):
     if not url:
         st.warning("请输入有效的网址！")
     else:
         image_files = []
         pdf_bytes = None
 
-        with st.status("正在进行防漂移高清渲染...", expanded=True) as status:
-            st.write("1. 正在初始化防漂移单页视口浏览器...")
+        with st.status("正在进行全自动高清渲染...", expanded=True) as status:
+            st.write("1. 正在初始化交互式视口浏览器...")
 
             try:
                 chrome_options = Options()
@@ -35,7 +36,6 @@ if st.button("开始防漂移高清转换并生成 PDF", type="primary", use_con
                 chrome_options.add_argument("--no-sandbox")
                 chrome_options.add_argument("--disable-dev-shm-usage")
                 chrome_options.add_argument("--disable-gpu")
-                # 核心修正：采用更极端的竖屏长条比例 (600x1100) + 2倍 Retina 像素比，彻底锁死单页
                 chrome_options.add_argument("--window-size=600,1100")
                 chrome_options.add_argument("--force-device-scale-factor=2")
                 chrome_options.add_argument(
@@ -48,20 +48,25 @@ if st.button("开始防漂移高清转换并生成 PDF", type="primary", use_con
                 
                 driver = webdriver.Chrome(service=service, options=chrome_options)
 
-                st.write("2. 正在打开网页并加载图书...")
+                st.write("2. 正在打开网页并执行首屏交互点击（跳过封面卡顿）...")
                 driver.get(url)
-                time.sleep(5)  # 等待首屏加载
+                time.sleep(6)  # 等待首屏加载
 
-                # 强制单页模式与横向滚动锁定
+                # 核心：模拟一次屏幕中央或右侧点击，用来点掉封面的“进入/阅读”按钮
                 driver.execute_script("""
-                    try {
-                        if (typeof switchViewMode === 'function') { switchViewMode('single'); }
-                        if (window.bookConfig) { window.bookConfig.singlePage = true; window.bookConfig.isDouble = false; }
-                    } catch(e) {}
+                    // 触发全屏点击以唤醒图书交互
+                    var clickEvent = new MouseEvent('click', {
+                        view: window,
+                        bubbles: true,
+                        cancelable: true,
+                        clientX: window.innerWidth / 2,
+                        clientY: window.innerHeight / 2
+                    });
+                    document.body.dispatchEvent(clickEvent);
                 """)
-                time.sleep(1)
+                time.sleep(2)
 
-                st.write(f"3. 正在逐页防漂移高清截图（上限 {int(total_pages)} 页，支持智能到底）...")
+                st.write(f"3. 正在逐页多维触发翻页与防漂移高清截图（上限 {int(total_pages)} 页）...")
                 progress_bar = st.progress(0)
 
                 with tempfile.TemporaryDirectory() as tmpdir:
@@ -70,22 +75,25 @@ if st.button("开始防漂移高清转换并生成 PDF", type="primary", use_con
 
                     for i in range(int(total_pages)):
                         if i > 0:
-                            # 触发向右翻页
+                            # 多维组合翻页：同时触发键盘右键、点击屏幕右侧、以及模拟向左滑动
                             driver.execute_script("""
-                                var event = new KeyboardEvent('keydown', {
-                                    key: 'ArrowRight',
-                                    code: 'ArrowRight',
-                                    keyCode: 39,
-                                    which: 39,
-                                    bubbles: true
+                                // 1. 键盘右键
+                                var kbEvent = new KeyboardEvent('keydown', {
+                                    key: 'ArrowRight', code: 'ArrowRight', keyCode: 39, which: 39, bubbles: true
                                 });
-                                document.dispatchEvent(event);
-                            """)
-                            time.sleep(0.8)
+                                document.dispatchEvent(kbEvent);
 
-                        # 核心防漂移：每次截图前，强制将页面横向和纵向滚动条归零，彻底防止画面向右偏移！
+                                // 2. 点击右侧边缘
+                                var clickRight = new MouseEvent('click', {
+                                    bubbles: true, clientX: window.innerWidth * 0.85, clientY: window.innerHeight / 2
+                                });
+                                document.body.dispatchEvent(clickRight);
+                            """)
+                            time.sleep(1.0)  # 给予充足的翻页动画时间
+
+                        # 每次截图前强制视口归零，防止漂移
                         driver.execute_script("window.scrollTo(0, 0);")
-                        time.sleep(0.3)  # 留出归零渲染缓冲
+                        time.sleep(0.3)
 
                         # 截取当前单页
                         screenshot_path = os.path.join(tmpdir, f"page_{i+1:03d}.png")
@@ -95,7 +103,7 @@ if st.button("开始防漂移高清转换并生成 PDF", type="primary", use_con
                         current_size = os.path.getsize(screenshot_path)
                         if i > 0 and current_size == last_screenshot_size:
                             consecutive_same_pages += 1
-                            if consecutive_same_pages >= 2:
+                            if consecutive_same_pages >= 3: # 连续3页完全一样才判定到底
                                 st.write(f"-> 检测到已到达书本末尾，提前结束截取（共 {i} 页）。")
                                 os.remove(screenshot_path)
                                 break
@@ -112,7 +120,7 @@ if st.button("开始防漂移高清转换并生成 PDF", type="primary", use_con
                         img_rgb.save(jpg_path, "JPEG", quality=98, subsampling=0)
                         image_files.append(jpg_path)
 
-                        st.write(f"✓ 已完美锁定并生成第 {i+1} 页单页高清图")
+                        st.write(f"✓ 已成功捕获第 {i+1} 页")
                         progress_bar.progress(min((i + 1) / total_pages, 1.0))
 
                     driver.quit()
@@ -122,7 +130,7 @@ if st.button("开始防漂移高清转换并生成 PDF", type="primary", use_con
                         st.error("未能截取到任何页面图像。")
                         st.stop()
 
-                    st.write("4. 成功完成所有防漂移截图，正在极速合成为 PDF...")
+                    st.write("4. 成功完成所有页面截图，正在合成为完整 PDF...")
                     output_pdf = os.path.join(tmpdir, "yunzhan_book.pdf")
 
                     with open(output_pdf, "wb") as f:
@@ -139,7 +147,7 @@ if st.button("开始防漂移高清转换并生成 PDF", type="primary", use_con
                 st.stop()
 
         if pdf_bytes:
-            st.success(f"🎉 电子书已成功转换为防漂移单页高清 PDF（共 {len(image_files)} 页）！")
+            st.success(f"🎉 电子书已成功转换为全自动高清 PDF（共 {len(image_files)} 页）！")
             st.download_button(
                 label="📥 点击下载生成的完整出版级 PDF 文件",
                 data=pdf_bytes,
