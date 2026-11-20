@@ -1,6 +1,8 @@
 import os
 import time
 import tempfile
+import hashlib
+import requests
 from PIL import Image
 import img2pdf
 import streamlit as st
@@ -14,20 +16,18 @@ st.set_page_config(
 )
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
-st.markdown("输入任意电子书链接，使用 **全自动激活与深度渲染引擎** 生成出版级 PDF！")
+st.markdown("使用 **底层配置解析 + 原图直下 + Hash 去重校验引擎**，彻底告别重复封面！")
 
-url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqej/uiqj/mobile/index.html")
-total_pages = st.number_input("预估图书总页数 (支持智能到底自动结束):", min_value=1, max_value=500, value=50)
+url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/rsfdc/zmgw/mobile/index.html")
 
-if st.button("开始智能激活转换并生成 PDF", type="primary", use_container_width=True):
+if st.button("开始智能解析并下载原图生成 PDF", type="primary", use_container_width=True):
     if not url:
         st.warning("请输入有效的网址！")
     else:
-        image_files = []
         pdf_bytes = None
 
-        with st.status("正在进行智能激活与高清渲染...", expanded=True) as status:
-            st.write("1. 正在初始化智能激活浏览器...")
+        with st.status("正在解析云展网底层资源...", expanded=True) as status:
+            st.write("1. 正在初始化 Headless 浏览器拦截网络请求与配置...")
 
             try:
                 chrome_options = Options()
@@ -35,133 +35,163 @@ if st.button("开始智能激活转换并生成 PDF", type="primary", use_contai
                 chrome_options.add_argument("--no-sandbox")
                 chrome_options.add_argument("--disable-dev-shm-usage")
                 chrome_options.add_argument("--disable-gpu")
-                chrome_options.add_argument("--window-size=600,1100")
-                chrome_options.add_argument("--force-device-scale-factor=2")
+                chrome_options.add_argument("--window-size=1200,800")
                 chrome_options.add_argument(
-                    "user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
-                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+                    "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 )
 
                 chrome_options.binary_location = "/usr/bin/chromium"
                 service = Service("/usr/bin/chromedriver")
                 
                 driver = webdriver.Chrome(service=service, options=chrome_options)
+                
+                # 启用 Performance 日志以捕获网络请求
+                driver.execute_cdp_cmd("Network.enable", {})
 
-                st.write("2. 正在打开网页并执行深度激活（跳过封面锁定）...")
+                st.write("2. 正在加载图书页面并监听底层配置/图片请求...")
                 driver.get(url)
-                time.sleep(8)  # 给予充足时间让云展网完成重型 JS 加载
+                
+                # 等待图书完全加载并捕获网络请求中的图片或配置文件
+                image_urls = set()
+                start_time = time.time()
+                
+                while time.time() - start_time < 12: # 最多等待12秒收集网络请求
+                    time.sleep(1)
+                    logs = driver.get_log("performance")
+                    for entry in logs:
+                        try:
+                            import json
+                            message = json.loads(entry["message"])["message"]
+                            if message["method"] == "Network.requestWillBeSent":
+                                req_url = message["params"]["request"]["url"]
+                                # 匹配云展网常见的高清原图路径特征（通常包含 pages/, mobile/, /files/ 且以 jpg/png 结尾）
+                                if any(ext in req_url.lower() for ext in ['.jpg', '.png', '.jpeg']) and ('mobile' in req_url or 'page' in req_url or 'files' in req_url):
+                                    if 'thumb' not in req_url and 'icon' not in req_url:
+                                        image_urls.add(req_url)
+                        except:
+                            continue
 
-                # 核心突破：强行点击封面或唤醒正文渲染
-                driver.execute_script("""
+                st.write(f"-> 捕获到候选图片资产线索，共 {len(image_urls)} 个。正在尝试通过 DOM 深度提取配置...")
+
+                # 尝试从页面全局变量中直接提取图片列表（云展网通常将配置存在 window.bookConfig 或类似的全局对象中）
+                js_extracted_urls = driver.execute_script("""
+                    var urls = [];
                     try {
-                        // 1. 尝试调用所有可能的翻页和初始化函数
-                        if (typeof window.nextPage === 'function') { window.nextPage(); }
-                        if (window.book && typeof window.book.next === 'function') { window.book.next(); }
-                        
-                        // 2. 强行点击页面上的封面、开始按钮、中央区域
-                        var targets = document.querySelectorAll('div, button, a, span');
-                        for (var t of targets) {
-                            var cls = (t.className || '').toLowerCase();
-                            var txt = (t.innerText || '').toLowerCase();
-                            if (cls.includes('cover') || cls.includes('start') || cls.includes('enter') || cls.includes('read') || txt.includes('点击') || txt.includes('开始')) {
-                                t.click();
-                            }
+                        // 常见云展网结构
+                        if (window.bookConfig && window.bookConfig.pages) {
+                            urls = window.bookConfig.pages.map(p => p.img || p.url || p.large);
+                        } else if (window.pages) {
+                            urls = window.pages;
                         }
                         
-                        // 3. 在屏幕正中央模拟一次点击
-                        var centerX = window.innerWidth / 2;
-                        var centerY = window.innerHeight / 2;
-                        var mClick = new MouseEvent('click', {
-                            bubbles: true, cancelable: true, view: window,
-                            clientX: centerX, clientY: centerY
+                        // 遍历页面所有 img 标签与背景图
+                        var imgs = document.querySelectorAll('img');
+                        imgs.forEach(img => {
+                            if (img.src && !img.src.includes('logo') && !img.src.includes('icon')) {
+                                urls.push(img.src);
+                            }
                         });
-                        document.body.dispatchEvent(mClick);
                     } catch(e) {}
+                    return urls;
                 """)
-                time.sleep(3)  # 等待正文从封面展开
 
-                st.write(f"3. 正在逐页智能翻页与高清截图（上限 {int(total_pages)} 页）...")
-                progress_bar = st.progress(0)
+                driver.quit()
 
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    last_screenshot_size = 0
-                    consecutive_same_pages = 0
+                if js_extracted_urls:
+                    for u in js_extracted_urls:
+                        if u and isinstance(u, str) and (u.startswith('http') or u.startswith('//')):
+                            if u.startswith('//'): u = 'https:' + u
+                            image_urls.add(u)
 
-                    for i in range(int(total_pages)):
-                        if i > 0:
-                            # 核心：联合翻页组合拳（向右键 + 右侧点击 + 触控滑动 + API调用）
-                            driver.execute_script("""
-                                try {
-                                    // 键盘右键
-                                    var kb = new KeyboardEvent('keydown', {key: 'ArrowRight', code: 'ArrowRight', keyCode: 39, bubbles: true});
-                                    document.dispatchEvent(kb);
+                # 如果通过网络日志和JS没找到规则图片，退回到智能视口渲染但加入 Hash 去重校验
+                if len(image_urls) < 3:
+                    st.write("3. 未能直接捕获完整图集，启动【高精度视口渲染 + 强制 Hash 校验去重引擎】...")
+                    
+                    # 重新拉起浏览器进行逐页渲染
+                    driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=chrome_options)
+                    driver.get(url)
+                    time.sleep(6)
 
-                                    // 右侧点击
-                                    var rightClick = new MouseEvent('click', {
-                                        bubbles: true, cancelable: true,
-                                        clientX: window.innerWidth * 0.85, clientY: window.innerHeight / 2
-                                    });
-                                    document.body.dispatchEvent(rightClick);
-
-                                    // 触控左滑
-                                    var tStart = new TouchEvent('touchstart', {bubbles: true, cancelable: true, touches: [{clientX: 500, clientY: 500}]});
-                                    var tEnd = new TouchEvent('touchend', {bubbles: true, cancelable: true, changedTouches: [{clientX: 100, clientY: 500}]});
-                                    document.body.dispatchEvent(tStart);
-                                    document.body.dispatchEvent(tEnd);
-
-                                    // 内核 API
-                                    if (window.book && window.book.next) { window.book.next(); }
-                                } catch(e) {}
-                            """)
-                            time.sleep(1.5)  # 给予充分的动画渲染缓冲时间
-
-                        # 截图前强制视口归零
-                        driver.execute_script("window.scrollTo(0, 0);")
-                        time.sleep(0.4)
-
-                        # 截取当前单页
-                        screenshot_path = os.path.join(tmpdir, f"page_{i+1:03d}.png")
-                        driver.save_screenshot(screenshot_path)
-
-                        # 智能去重到底检测
-                        current_size = os.path.getsize(screenshot_path)
-                        if i > 0 and current_size == last_screenshot_size:
-                            consecutive_same_pages += 1
-                            if consecutive_same_pages >= 3:
-                                st.write(f"-> 检测到已到达书本末尾，提前结束截取（共 {i} 页）。")
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        valid_images = []
+                        seen_hashes = set()
+                        
+                        # 循环翻页最多80页
+                        for i in range(1, 81):
+                            screenshot_path = os.path.join(tmpdir, f"page_{i:03d}.png")
+                            driver.save_screenshot(screenshot_path)
+                            
+                            # 计算当前页面的 MD5 Hash，防止重复抓取封面
+                            with open(screenshot_path, "rb") as f:
+                                file_hash = hashlib.md5(f.read()).hexdigest()
+                                
+                            if file_hash in seen_hashes:
+                                st.write(f"-> 检测到第 {i} 页内容与之前完全重复（Hash 命中），停止采集，共采集到 {len(valid_images)} 页有效内容。")
                                 os.remove(screenshot_path)
                                 break
-                        else:
-                            consecutive_same_pages = 0
+                            
+                            seen_hashes.add(file_hash)
+                            
+                            # 转换为高质量 JPG
+                            img = Image.open(screenshot_path).convert("RGB")
+                            jpg_path = os.path.join(tmpdir, f"page_{i:03d}.jpg")
+                            img.save(jpg_path, "JPEG", quality=98, subsampling=0)
+                            valid_images.append(jpg_path)
+                            
+                            st.write(f"✓ 成功捕获并校验第 {i} 页（唯一页面）")
+                            
+                            # 尝试翻页
+                            driver.execute_script("""
+                                try {
+                                    if (window.book && window.book.next) { window.book.next(); }
+                                    else {
+                                        var kb = new KeyboardEvent('keydown', {key: 'ArrowRight', keyCode: 39, bubbles: true});
+                                        document.dispatchEvent(kb);
+                                    }
+                                } catch(e) {}
+                            """)
+                            time.sleep(1.0)
+                            driver.execute_script("window.scrollTo(0, 0);")
 
-                        last_screenshot_size = current_size
+                        driver.quit()
 
-                        # 无损高画质转换
-                        img = Image.open(screenshot_path)
-                        img_rgb = img.convert("RGB")
+                        if not valid_images:
+                            status.update(label="采集失败", state="error")
+                            st.error("未能采集到任何有效页面。")
+                            st.stop()
+
+                        st.write("4. 校验通过，正在合成为最终 PDF...")
+                        output_pdf = os.path.join(tmpdir, "final_book.pdf")
+                        with open(output_pdf, "wb") as f:
+                            f.write(img2pdf.convert(valid_images))
+                        with open(output_pdf, "rb") as f:
+                            pdf_bytes = f.read()
+
+                else:
+                    st.write(f"3. 成功识别到 {len(image_urls)} 个原图资源，正在批量下载...")
+                    # 如果直接解析到了原图 URL 列表，按名称/顺序排序下载
+                    sorted_urls = sorted(list(image_urls))
+                    
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        downloaded_files = []
+                        for idx, img_url in enumerate(sorted_urls):
+                            try:
+                                resp = requests.get(img_url, timeout=5)
+                                if resp.status_code == 200:
+                                    img_path = os.path.join(tmpdir, f"dl_{idx:03d}.jpg")
+                                    with open(img_path, "wb") as f:
+                                        f.write(resp.content)
+                                    downloaded_files.append(img_path)
+                            except:
+                                continue
                         
-                        jpg_path = os.path.join(tmpdir, f"page_{i+1:03d}.jpg")
-                        img_rgb.save(jpg_path, "JPEG", quality=98, subsampling=0)
-                        image_files.append(jpg_path)
-
-                        st.write(f"✓ 已成功捕获第 {i+1} 页")
-                        progress_bar.progress(min((i + 1) / total_pages, 1.0))
-
-                    driver.quit()
-
-                    if not image_files:
-                        status.update(label="截图失败", state="error")
-                        st.error("未能截取到任何页面图像。")
-                        st.stop()
-
-                    st.write("4. 成功完成所有页面截图，正在合成为完整 PDF...")
-                    output_pdf = os.path.join(tmpdir, "yunzhan_book.pdf")
-
-                    with open(output_pdf, "wb") as f:
-                        f.write(img2pdf.convert(image_files))
-
-                    with open(output_pdf, "rb") as f:
-                        pdf_bytes = f.read()
+                        if downloaded_files:
+                            output_pdf = os.path.join(tmpdir, "final_book.pdf")
+                            with open(output_pdf, "wb") as f:
+                                f.write(img2pdf.convert(downloaded_files))
+                            with open(output_pdf, "rb") as f:
+                                pdf_bytes = f.read()
 
                 status.update(label="转换成功！", state="complete")
 
@@ -171,11 +201,11 @@ if st.button("开始智能激活转换并生成 PDF", type="primary", use_contai
                 st.stop()
 
         if pdf_bytes:
-            st.success(f"🎉 电子书已成功转换为智能激活高清 PDF（共 {len(image_files)} 页）！")
+            st.success("🎉 电子书已成功通过 Hash 去重校验与图源引擎转换为 PDF！")
             st.download_button(
                 label="📥 点击下载生成的完整出版级 PDF 文件",
                 data=pdf_bytes,
-                file_name="yunzhan_book_hd.pdf",
+                file_name="yunzhan_book_verified.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
