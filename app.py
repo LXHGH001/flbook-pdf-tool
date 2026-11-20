@@ -14,21 +14,20 @@ st.set_page_config(
 )
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
-st.markdown("输入任意电子书链接，使用 **全自动交互防卡死翻页引擎** 生成出版级 PDF！")
+st.markdown("输入任意电子书链接，使用 **底层 API 强制翻页引擎** 生成出版级 PDF！")
 
-# 默认填入你新换的网址，或允许你随时更换
 url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqej/uiqj/mobile/index.html")
 total_pages = st.number_input("预估图书总页数 (支持智能到底自动结束):", min_value=1, max_value=500, value=50)
 
-if st.button("开始全自动高清转换并生成 PDF", type="primary", use_container_width=True):
+if st.button("开始底层强制转换并生成 PDF", type="primary", use_container_width=True):
     if not url:
         st.warning("请输入有效的网址！")
     else:
         image_files = []
         pdf_bytes = None
 
-        with st.status("正在进行全自动高清渲染...", expanded=True) as status:
-            st.write("1. 正在初始化交互式视口浏览器...")
+        with st.status("正在进行底层 API 强制渲染...", expanded=True) as status:
+            st.write("1. 正在初始化底层控制浏览器...")
 
             try:
                 chrome_options = Options()
@@ -48,25 +47,26 @@ if st.button("开始全自动高清转换并生成 PDF", type="primary", use_con
                 
                 driver = webdriver.Chrome(service=service, options=chrome_options)
 
-                st.write("2. 正在打开网页并执行首屏交互点击（跳过封面卡顿）...")
+                st.write("2. 正在打开网页并寻找底层翻页钩子...")
                 driver.get(url)
-                time.sleep(6)  # 等待首屏加载
+                time.sleep(6)  # 等待首屏完全加载
 
-                # 核心：模拟一次屏幕中央或右侧点击，用来点掉封面的“进入/阅读”按钮
+                # 核心：自动探测并点击封面上的进入按钮或调用全局翻页方法
                 driver.execute_script("""
-                    // 触发全屏点击以唤醒图书交互
-                    var clickEvent = new MouseEvent('click', {
-                        view: window,
-                        bubbles: true,
-                        cancelable: true,
-                        clientX: window.innerWidth / 2,
-                        clientY: window.innerHeight / 2
-                    });
-                    document.body.dispatchEvent(clickEvent);
+                    // 尝试所有可能的进入/翻页函数
+                    try {
+                        if (typeof window.nextPage === 'function') { window.nextPage(); }
+                        if (window.book && typeof window.book.next === 'function') { window.book.next(); }
+                        if (window.turn && typeof window.turn.next === 'function') { window.turn.next(); }
+                        
+                        // 寻找封面上的按钮并模拟点击
+                        var btn = document.querySelector('.start-read, .enter-btn, .read-btn, .book-cover, div[class*="cover"]');
+                        if (btn) { btn.click(); }
+                    } catch(e) {}
                 """)
                 time.sleep(2)
 
-                st.write(f"3. 正在逐页多维触发翻页与防漂移高清截图（上限 {int(total_pages)} 页）...")
+                st.write(f"3. 正在通过底层 API 逐页强制截图（上限 {int(total_pages)} 页）...")
                 progress_bar = st.progress(0)
 
                 with tempfile.TemporaryDirectory() as tmpdir:
@@ -75,23 +75,32 @@ if st.button("开始全自动高清转换并生成 PDF", type="primary", use_con
 
                     for i in range(int(total_pages)):
                         if i > 0:
-                            # 多维组合翻页：同时触发键盘右键、点击屏幕右侧、以及模拟向左滑动
+                            # 核心：多重底层 JS 强制翻页组合拳
                             driver.execute_script("""
-                                // 1. 键盘右键
-                                var kbEvent = new KeyboardEvent('keydown', {
-                                    key: 'ArrowRight', code: 'ArrowRight', keyCode: 39, which: 39, bubbles: true
-                                });
-                                document.dispatchEvent(kbEvent);
-
-                                // 2. 点击右侧边缘
-                                var clickRight = new MouseEvent('click', {
-                                    bubbles: true, clientX: window.innerWidth * 0.85, clientY: window.innerHeight / 2
-                                });
-                                document.body.dispatchEvent(clickRight);
+                                try {
+                                    // 1. 调用常见的翻页函数
+                                    if (typeof window.nextPage === 'function') { window.nextPage(); }
+                                    else if (window.book && typeof window.book.next === 'function') { window.book.next(); }
+                                    else if (window.turn && typeof window.turn.next === 'function') { window.turn.next(); }
+                                    else if (window.flipbook && typeof window.flipbook.next === 'function') { window.flipbook.next(); }
+                                    else {
+                                        // 2. 如果没有现成函数，直接模拟向左滑动事件（触控翻页）
+                                        var touchStart = new TouchEvent('touchstart', {
+                                            bubbles: true, cancelable: true,
+                                            touches: [{clientX: 400, clientY: 500}]
+                                        });
+                                        var touchEnd = new TouchEvent('touchend', {
+                                            bubbles: true, cancelable: true,
+                                            changedTouches: [{clientX: 100, clientY: 500}]
+                                        });
+                                        document.body.dispatchEvent(touchStart);
+                                        document.body.dispatchEvent(touchEnd);
+                                    }
+                                } catch(e) {}
                             """)
-                            time.sleep(1.0)  # 给予充足的翻页动画时间
+                            time.sleep(1.2)  # 给足动画渲染时间
 
-                        # 每次截图前强制视口归零，防止漂移
+                        # 截图前强制视口归零
                         driver.execute_script("window.scrollTo(0, 0);")
                         time.sleep(0.3)
 
@@ -103,7 +112,7 @@ if st.button("开始全自动高清转换并生成 PDF", type="primary", use_con
                         current_size = os.path.getsize(screenshot_path)
                         if i > 0 and current_size == last_screenshot_size:
                             consecutive_same_pages += 1
-                            if consecutive_same_pages >= 3: # 连续3页完全一样才判定到底
+                            if consecutive_same_pages >= 3:
                                 st.write(f"-> 检测到已到达书本末尾，提前结束截取（共 {i} 页）。")
                                 os.remove(screenshot_path)
                                 break
@@ -143,11 +152,11 @@ if st.button("开始全自动高清转换并生成 PDF", type="primary", use_con
 
             except Exception as e:
                 status.update(label="运行出错", state="error")
-                st.error(f"详细错误: {e}")
+                st.error(f>详细错误: {e}")
                 st.stop()
 
         if pdf_bytes:
-            st.success(f"🎉 电子书已成功转换为全自动高清 PDF（共 {len(image_files)} 页）！")
+            st.success(f"🎉 电子书已成功转换为底层强制渲染 PDF（共 {len(image_files)} 页）！")
             st.download_button(
                 label="📥 点击下载生成的完整出版级 PDF 文件",
                 data=pdf_bytes,
