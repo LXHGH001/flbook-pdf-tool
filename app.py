@@ -8,27 +8,26 @@ import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
 
 st.set_page_config(
     page_title="FLBook & 云展网转 PDF 工具", page_icon="📚", layout="centered"
 )
 
 st.title("📚 FLBook & 云展网电子书转 PDF 工具")
-st.markdown("输入任意电子书链接，使用 **UI 元素精准点击翻页引擎** 生成出版级 PDF！")
+st.markdown("输入任意电子书链接，使用 **全自动激活与深度渲染引擎** 生成出版级 PDF！")
 
 url = st.text_input("请输入电子书网址 (URL):", "https://book.yunzhan365.com/yhqej/uiqj/mobile/index.html")
 total_pages = st.number_input("预估图书总页数 (支持智能到底自动结束):", min_value=1, max_value=500, value=50)
 
-if st.button("开始精准点击转换并生成 PDF", type="primary", use_container_width=True):
+if st.button("开始智能激活转换并生成 PDF", type="primary", use_container_width=True):
     if not url:
         st.warning("请输入有效的网址！")
     else:
         image_files = []
         pdf_bytes = None
 
-        with st.status("正在进行精准 UI 点击渲染...", expanded=True) as status:
-            st.write("1. 正在初始化 UI 交互浏览器...")
+        with st.status("正在进行智能激活与高清渲染...", expanded=True) as status:
+            st.write("1. 正在初始化智能激活浏览器...")
 
             try:
                 chrome_options = Options()
@@ -48,11 +47,40 @@ if st.button("开始精准点击转换并生成 PDF", type="primary", use_contai
                 
                 driver = webdriver.Chrome(service=service, options=chrome_options)
 
-                st.write("2. 正在打开网页并等待首屏加载...")
+                st.write("2. 正在打开网页并执行深度激活（跳过封面锁定）...")
                 driver.get(url)
-                time.sleep(7)  # 给予充足时间加载完整的 UI 控件
+                time.sleep(8)  # 给予充足时间让云展网完成重型 JS 加载
 
-                st.write(f"3. 正在逐页通过 UI 按钮点击并高清截图（上限 {int(total_pages)} 页）...")
+                # 核心突破：强行点击封面或唤醒正文渲染
+                driver.execute_script("""
+                    try {
+                        // 1. 尝试调用所有可能的翻页和初始化函数
+                        if (typeof window.nextPage === 'function') { window.nextPage(); }
+                        if (window.book && typeof window.book.next === 'function') { window.book.next(); }
+                        
+                        // 2. 强行点击页面上的封面、开始按钮、中央区域
+                        var targets = document.querySelectorAll('div, button, a, span');
+                        for (var t of targets) {
+                            var cls = (t.className || '').toLowerCase();
+                            var txt = (t.innerText || '').toLowerCase();
+                            if (cls.includes('cover') || cls.includes('start') || cls.includes('enter') || cls.includes('read') || txt.includes('点击') || txt.includes('开始')) {
+                                t.click();
+                            }
+                        }
+                        
+                        // 3. 在屏幕正中央模拟一次点击
+                        var centerX = window.innerWidth / 2;
+                        var centerY = window.innerHeight / 2;
+                        var mClick = new MouseEvent('click', {
+                            bubbles: true, cancelable: true, view: window,
+                            clientX: centerX, clientY: centerY
+                        });
+                        document.body.dispatchEvent(mClick);
+                    } catch(e) {}
+                """)
+                time.sleep(3)  # 等待正文从封面展开
+
+                st.write(f"3. 正在逐页智能翻页与高清截图（上限 {int(total_pages)} 页）...")
                 progress_bar = st.progress(0)
 
                 with tempfile.TemporaryDirectory() as tmpdir:
@@ -61,31 +89,35 @@ if st.button("开始精准点击转换并生成 PDF", type="primary", use_contai
 
                     for i in range(int(total_pages)):
                         if i > 0:
-                            # 核心：通过 JS 或 Selenium 尝试寻找并点击页面上的“下一页”按钮
-                            clicked = driver.execute_script("""
-                                // 查找云展网/FLBook常见的右侧翻页按钮、箭头或图标
-                                var nextBtn = document.querySelector('.icon-arrow-right, .next-page, .book-next, [class*="next"], [class*="right-arrow"], button.right');
-                                if (!nextBtn) {
-                                    // 如果找不到特定类名，尝试点击屏幕右侧边缘
-                                    var allDivs = document.querySelectorAll('div');
-                                    // 模拟在右侧区域点击
-                                    var clickEvent = new MouseEvent('click', {
-                                        bubbles: true, cancelable: true,
-                                        clientX: window.innerWidth * 0.9,
-                                        clientY: window.innerHeight / 2
-                                    });
-                                    document.body.dispatchEvent(clickEvent);
-                                    return true;
-                                } else {
-                                    nextBtn.click();
-                                    return true;
-                                }
-                            """)
-                            time.sleep(1.2)  # 等待翻页动画稳定
+                            # 核心：联合翻页组合拳（向右键 + 右侧点击 + 触控滑动 + API调用）
+                            driver.execute_script("""
+                                try {
+                                    // 键盘右键
+                                    var kb = new KeyboardEvent('keydown', {key: 'ArrowRight', code: 'ArrowRight', keyCode: 39, bubbles: true});
+                                    document.dispatchEvent(kb);
 
-                        # 截图前强制视口归零，防止漂移
+                                    // 右侧点击
+                                    var rightClick = new MouseEvent('click', {
+                                        bubbles: true, cancelable: true,
+                                        clientX: window.innerWidth * 0.85, clientY: window.innerHeight / 2
+                                    });
+                                    document.body.dispatchEvent(rightClick);
+
+                                    // 触控左滑
+                                    var tStart = new TouchEvent('touchstart', {bubbles: true, cancelable: true, touches: [{clientX: 500, clientY: 500}]});
+                                    var tEnd = new TouchEvent('touchend', {bubbles: true, cancelable: true, changedTouches: [{clientX: 100, clientY: 500}]});
+                                    document.body.dispatchEvent(tStart);
+                                    document.body.dispatchEvent(tEnd);
+
+                                    // 内核 API
+                                    if (window.book && window.book.next) { window.book.next(); }
+                                } catch(e) {}
+                            """)
+                            time.sleep(1.5)  # 给予充分的动画渲染缓冲时间
+
+                        # 截图前强制视口归零
                         driver.execute_script("window.scrollTo(0, 0);")
-                        time.sleep(0.3)
+                        time.sleep(0.4)
 
                         # 截取当前单页
                         screenshot_path = os.path.join(tmpdir, f"page_{i+1:03d}.png")
@@ -139,7 +171,7 @@ if st.button("开始精准点击转换并生成 PDF", type="primary", use_contai
                 st.stop()
 
         if pdf_bytes:
-            st.success(f"🎉 电子书已成功转换为 UI 点击高清 PDF（共 {len(image_files)} 页）！")
+            st.success(f"🎉 电子书已成功转换为智能激活高清 PDF（共 {len(image_files)} 页）！")
             st.download_button(
                 label="📥 点击下载生成的完整出版级 PDF 文件",
                 data=pdf_bytes,
