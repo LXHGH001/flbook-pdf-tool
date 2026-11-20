@@ -53,13 +53,11 @@ if st.button("开始底层强制转换并生成 PDF", type="primary", use_contai
 
                 # 核心：自动探测并点击封面上的进入按钮或调用全局翻页方法
                 driver.execute_script("""
-                    // 尝试所有可能的进入/翻页函数
                     try {
                         if (typeof window.nextPage === 'function') { window.nextPage(); }
                         if (window.book && typeof window.book.next === 'function') { window.book.next(); }
                         if (window.turn && typeof window.turn.next === 'function') { window.turn.next(); }
                         
-                        // 寻找封面上的按钮并模拟点击
                         var btn = document.querySelector('.start-read, .enter-btn, .read-btn, .book-cover, div[class*="cover"]');
                         if (btn) { btn.click(); }
                     } catch(e) {}
@@ -78,13 +76,11 @@ if st.button("开始底层强制转换并生成 PDF", type="primary", use_contai
                             # 核心：多重底层 JS 强制翻页组合拳
                             driver.execute_script("""
                                 try {
-                                    // 1. 调用常见的翻页函数
                                     if (typeof window.nextPage === 'function') { window.nextPage(); }
                                     else if (window.book && typeof window.book.next === 'function') { window.book.next(); }
                                     else if (window.turn && typeof window.turn.next === 'function') { window.turn.next(); }
                                     else if (window.flipbook && typeof window.flipbook.next === 'function') { window.flipbook.next(); }
                                     else {
-                                        // 2. 如果没有现成函数，直接模拟向左滑动事件（触控翻页）
                                         var touchStart = new TouchEvent('touchstart', {
                                             bubbles: true, cancelable: true,
                                             touches: [{clientX: 400, clientY: 500}]
@@ -98,7 +94,7 @@ if st.button("开始底层强制转换并生成 PDF", type="primary", use_contai
                                     }
                                 } catch(e) {}
                             """)
-                            time.sleep(1.2)  # 给足动画渲染时间
+                            time.sleep(1.2)
 
                         # 截图前强制视口归零
                         driver.execute_script("window.scrollTo(0, 0);")
@@ -152,7 +148,7 @@ if st.button("开始底层强制转换并生成 PDF", type="primary", use_contai
 
             except Exception as e:
                 status.update(label="运行出错", state="error")
-                st.error(f>详细错误: {e}")
+                st.error(f"详细错误: {e}")
                 st.stop()
 
         if pdf_bytes:
